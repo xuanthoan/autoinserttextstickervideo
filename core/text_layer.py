@@ -1,0 +1,31 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from uuid import uuid4
+
+
+@dataclass
+class TextLayer:
+    text: str = "Sample text"
+    start_time: float = 0.0
+    end_time: float = 5.0
+    x: float = 100.0
+    y: float = 100.0
+    rotation: float = 0.0
+    font_path: str = ""
+    font_size: int = 48
+    color: str = "white"
+    stroke_color: str = "black"
+    stroke_width: int = 2
+    box_enabled: bool = False
+    box_color: str = "black@0.5"
+    box_padding: int = 10
+    opacity: float = 1.0
+    motion_preset: str = "none"
+    motion_duration: float = 0.5
+    easing: str = "linear"
+    layer_id: str = field(default_factory=lambda: f"text-{uuid4().hex[:8]}")
+
+    @property
+    def kind(self) -> str:
+        return "text"

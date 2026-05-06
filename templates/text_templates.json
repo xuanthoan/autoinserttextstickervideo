@@ -1,0 +1,26 @@
+{
+  "Headline": {
+    "font_size": 72,
+    "color": "white",
+    "stroke_color": "black",
+    "stroke_width": 4,
+    "box_enabled": false,
+    "opacity": 1.0,
+    "motion_preset": "fade",
+    "motion_duration": 0.5,
+    "easing": "ease-out"
+  },
+  "Lower Third": {
+    "font_size": 42,
+    "color": "white",
+    "stroke_color": "black",
+    "stroke_width": 2,
+    "box_enabled": true,
+    "box_color": "black@0.45",
+    "box_padding": 16,
+    "opacity": 1.0,
+    "motion_preset": "slide",
+    "motion_duration": 0.6,
+    "easing": "ease-out"
+  }
+}
