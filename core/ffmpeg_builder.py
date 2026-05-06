@@ -71,10 +71,10 @@ def _sticker_filter(layer: StickerLayer, source_label: str, input_index: int, st
     return [sticker, overlay], out
 
 
-def build_ffmpeg_command(project: Project, output_path: str) -> FFmpegCommand:
+def build_ffmpeg_command(project: Project, output_path: str, require_binaries: bool = False) -> FFmpegCommand:
     if not project.video_path:
         raise ValueError("Project has no input video")
-    args = [ffmpeg_path(), "-y", "-fflags", "+genpts", "-i", project.video_path]
+    args = [ffmpeg_path(require=require_binaries), "-y", "-fflags", "+genpts", "-i", project.video_path]
     for layer in project.sticker_layers:
         if not layer.file_path:
             continue

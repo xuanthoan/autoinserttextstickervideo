@@ -11,7 +11,7 @@ LOGGER = logging.getLogger(__name__)
 
 
 def render_project(project: Project, output_path: str, on_log: Callable[[str], None] | None = None) -> FFmpegCommand:
-    command = build_ffmpeg_command(project, output_path)
+    command = build_ffmpeg_command(project, output_path, require_binaries=True)
     LOGGER.info("Running FFmpeg: %s", command.shell_string())
     process = subprocess.Popen(command.args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     assert process.stdout is not None

@@ -7,30 +7,75 @@ import sys
 from pathlib import Path
 
 
+def _binary_names(name: str) -> list[str]:
+    """Return executable names to try on every platform.
+
+    Users often drop the Windows `ffmpeg.exe`/`ffprobe.exe` files next to
+    `main.py`; trying both forms also keeps source-tree smoke tests portable.
+    """
+    names = [name]
+    if not name.lower().endswith(".exe"):
+        names.insert(0, f"{name}.exe")
+    return names
+
+
+def _candidate_roots() -> list[Path]:
+    roots: list[Path] = []
+    if getattr(sys, "frozen", False):
+        roots.append(Path(sys.executable).resolve().parent)
+        meipass = getattr(sys, "_MEIPASS", None)
+        if meipass:
+            roots.append(Path(meipass).resolve())
+    roots.append(Path(__file__).resolve().parents[1])
+    roots.append(Path.cwd().resolve())
+
+    unique: list[Path] = []
+    for root in roots:
+        if root not in unique:
+            unique.append(root)
+    return unique
+
+
+def _candidate_paths(name: str) -> list[Path]:
+    candidates: list[Path] = []
+    for root in _candidate_roots():
+        for binary_name in _binary_names(name):
+            candidates.append(root / binary_name)
+            candidates.append(root / "bin" / binary_name)
+    return candidates
+
+
 def bundled_binary(name: str, require: bool = False) -> str:
-    exe = f"{name}.exe" if sys.platform.startswith("win") else name
-    local = Path(__file__).resolve().parents[1] / "bin" / exe
-    if local.exists():
-        return str(local)
-    found = shutil.which(exe) or shutil.which(name)
-    if found:
-        return found
+    for candidate in _candidate_paths(name):
+        if candidate.exists():
+            return str(candidate)
+
+    for binary_name in _binary_names(name):
+        found = shutil.which(binary_name)
+        if found:
+            return found
+
     if require:
-        raise FileNotFoundError(f"Cannot find {name}. Put it in bin/ or on PATH.")
-    return str(local)
+        searched = "\n".join(f"- {path}" for path in _candidate_paths(name))
+        raise FileNotFoundError(
+            f"Cannot find {name}. Put {name}.exe next to main.py, in bin/, or on PATH.\nSearched:\n{searched}"
+        )
+
+    fallback = Path(__file__).resolve().parents[1] / "bin" / _binary_names(name)[0]
+    return str(fallback)
 
 
-def ffmpeg_path() -> str:
-    return bundled_binary("ffmpeg")
+def ffmpeg_path(require: bool = False) -> str:
+    return bundled_binary("ffmpeg", require=require)
 
 
-def ffprobe_path() -> str:
-    return bundled_binary("ffprobe", require=True)
+def ffprobe_path(require: bool = False) -> str:
+    return bundled_binary("ffprobe", require=require)
 
 
 def probe_video(path: str) -> dict[str, float | int]:
     command = [
-        ffprobe_path(),
+        ffprobe_path(require=True),
         "-v",
         "error",
         "-select_streams",

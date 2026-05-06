@@ -17,7 +17,7 @@ Python 3.11+ desktop editor for adding animated text and sticker overlays to vid
 python -m pip install -r requirements.txt
 ```
 
-Install FFmpeg and FFprobe on `PATH`, or place bundled binaries in `bin/` as `ffmpeg.exe` and `ffprobe.exe` for Windows builds.
+Install FFmpeg and FFprobe on `PATH`, place bundled binaries in `bin/`, or drop `ffmpeg.exe` and `ffprobe.exe` directly next to `main.py` for Windows/source-tree runs.
 
 ## Run
 

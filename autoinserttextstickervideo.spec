@@ -4,7 +4,11 @@ from pathlib import Path
 from PyInstaller.utils.hooks import collect_submodules
 
 block_cipher = None
-bundled_bins = [(str(path), 'bin') for path in (Path('bin') / name for name in ('ffmpeg.exe', 'ffprobe.exe')) if path.exists()]
+bundled_bins = []
+for name in ('ffmpeg.exe', 'ffprobe.exe'):
+    for path, dest in ((Path(name), '.'), (Path('bin') / name, 'bin')):
+        if path.exists():
+            bundled_bins.append((str(path), dest))
 
 a = Analysis(
     ['main.py'],
