@@ -135,7 +135,7 @@ class MainWindow(QMainWindow):
             ("Background", self.box_enabled),
             ("Background color", self.box_color),
             ("", self.box_color_button),
-            ("Background padding", self.box_padding),
+            ("Min background padding", self.box_padding),
             ("Opacity", self.opacity),
             ("X", self.x_value),
             ("Y", self.y_value),

@@ -20,6 +20,7 @@ class TextLayer:
     box_enabled: bool = False
     box_color: str = "black@0.5"
     box_padding: int = 10
+    box_radius: int = 0
     opacity: float = 1.0
     motion_preset: str = "none"
     motion_duration: float = 0.5
@@ -29,3 +30,17 @@ class TextLayer:
     @property
     def kind(self) -> str:
         return "text"
+
+    def effective_box_padding(self) -> int:
+        """Scale background padding with the current font size.
+
+        The inspector value acts as a minimum so existing projects keep their
+        spacing, while larger text automatically gets a larger background.
+        """
+        return max(self.box_padding, round(self.font_size * 0.28))
+
+    def effective_box_radius(self) -> int:
+        """Scale corner radius with font/background size unless overridden."""
+        if self.box_radius > 0:
+            return self.box_radius
+        return max(4, round(self.effective_box_padding() * 0.9))

@@ -56,7 +56,7 @@ class LayerTextItem(QGraphicsTextItem):
         stroke = self.layer.stroke_width
         rect = rect.adjusted(-stroke, -stroke, stroke, stroke)
         if self.layer.box_enabled:
-            padding = self.layer.box_padding
+            padding = self.layer.effective_box_padding()
             return rect.adjusted(-padding, -padding, padding, padding)
         return rect
 
@@ -66,7 +66,8 @@ class LayerTextItem(QGraphicsTextItem):
         if self.layer.box_enabled:
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(QBrush(_preview_color(self.layer.box_color, "black")))
-            painter.drawRect(self.boundingRect())
+            radius = self.layer.effective_box_radius()
+            painter.drawRoundedRect(self.boundingRect(), radius, radius)
         path = QPainterPath()
         metrics = QFontMetricsF(self.font())
         path.addText(0, metrics.ascent(), self.font(), self.toPlainText())
