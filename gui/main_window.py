@@ -5,7 +5,8 @@ import logging
 from dataclasses import asdict
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QUrl, Qt
+from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtWidgets import (
     QCheckBox,
     QColorDialog,
@@ -50,6 +51,9 @@ class MainWindow(QMainWindow):
         self.timeline = TimelinePanel()
         self.log_view = QTextEdit()
         self.log_view.setReadOnly(True)
+        self.player = QMediaPlayer(self)
+        self.audio_output = QAudioOutput(self)
+        self.player.setAudioOutput(self.audio_output)
         self.setCentralWidget(self.canvas)
         self._build_toolbar()
         self._build_docks()
@@ -62,6 +66,9 @@ class MainWindow(QMainWindow):
         self.addToolBar(toolbar)
         actions = [
             ("Open Video", self.open_video),
+            ("Play", self.play_video),
+            ("Pause", self.pause_video),
+            ("Stop", self.stop_video),
             ("Add Text", self.add_text),
             ("Add Sticker", self.add_sticker),
             ("Save Project", self.save_project),
@@ -87,10 +94,14 @@ class MainWindow(QMainWindow):
         self.font_size.setRange(1, 400)
         self.color_button = QPushButton("Choose")
         self.stroke_color = QLineEdit("black")
+        self.stroke_color_button = QPushButton("Choose stroke")
         self.stroke_width = QSpinBox()
         self.stroke_width.setRange(0, 50)
         self.box_enabled = QCheckBox()
         self.box_color = QLineEdit("black@0.5")
+        self.box_color_button = QPushButton("Choose background")
+        self.box_padding = QSpinBox()
+        self.box_padding.setRange(0, 200)
         self.opacity = QDoubleSpinBox()
         self.opacity.setRange(0.0, 1.0)
         self.opacity.setSingleStep(0.05)
@@ -119,9 +130,12 @@ class MainWindow(QMainWindow):
             ("Font size", self.font_size),
             ("Text color", self.color_button),
             ("Stroke color", self.stroke_color),
+            ("", self.stroke_color_button),
             ("Stroke width", self.stroke_width),
             ("Background", self.box_enabled),
             ("Background color", self.box_color),
+            ("", self.box_color_button),
+            ("Background padding", self.box_padding),
             ("Opacity", self.opacity),
             ("X", self.x_value),
             ("Y", self.y_value),
@@ -144,15 +158,20 @@ class MainWindow(QMainWindow):
     def _connect_signals(self) -> None:
         self.canvas.layerMoved.connect(self.move_layer)
         self.canvas.filesDropped.connect(self.handle_files_dropped)
+        self.canvas.videoOutputChanged.connect(self.player.setVideoOutput)
+        self.player.positionChanged.connect(self.update_preview_time)
         self.timeline.layerTimingChanged.connect(self.change_timing)
         self.timeline.layerSelected.connect(self.select_layer)
         self.text_input.editingFinished.connect(self.apply_inspector)
         self.font_path.editingFinished.connect(self.apply_inspector)
         self.font_size.valueChanged.connect(self.apply_inspector)
         self.stroke_color.editingFinished.connect(self.apply_inspector)
+        self.stroke_color_button.clicked.connect(self.choose_stroke_color)
         self.stroke_width.valueChanged.connect(self.apply_inspector)
         self.box_enabled.stateChanged.connect(self.apply_inspector)
         self.box_color.editingFinished.connect(self.apply_inspector)
+        self.box_color_button.clicked.connect(self.choose_box_color)
+        self.box_padding.valueChanged.connect(self.apply_inspector)
         self.opacity.valueChanged.connect(self.apply_inspector)
         self.x_value.valueChanged.connect(self.apply_inspector)
         self.y_value.valueChanged.connect(self.apply_inspector)
@@ -186,6 +205,7 @@ class MainWindow(QMainWindow):
             self.project.width = int(metadata["width"])
             self.project.height = int(metadata["height"])
             self.project.duration = float(metadata["duration"])
+            self._set_player_source(path)
             self._refresh_all()
         except Exception as exc:  # noqa: BLE001
             QMessageBox.critical(self, "FFprobe error", str(exc))
@@ -213,6 +233,7 @@ class MainWindow(QMainWindow):
                     self.project.width = int(metadata["width"])
                     self.project.height = int(metadata["height"])
                     self.project.duration = float(metadata["duration"])
+                    self._set_player_source(path)
                 except Exception as exc:  # noqa: BLE001
                     self.log_view.append(f"Probe failed: {exc}")
             elif suffix in {".png", ".jpg", ".jpeg", ".webp"}:
@@ -238,7 +259,7 @@ class MainWindow(QMainWindow):
             return
         layer.start_time = min(start, end)
         layer.end_time = max(start, end)
-        self.canvas.refresh()
+        self.canvas.refresh_overlays()
 
     def populate_inspector(self) -> None:
         layer = self._layer_by_id(self.selected_layer_id)
@@ -265,6 +286,10 @@ class MainWindow(QMainWindow):
                 self.stroke_width.setValue(layer.stroke_width)
                 self.box_enabled.setChecked(layer.box_enabled)
                 self.box_color.setText(layer.box_color)
+                self.box_padding.setValue(layer.box_padding)
+                self.color_button.setStyleSheet(f"background-color: {layer.color}")
+                self.stroke_color_button.setStyleSheet(f"background-color: {layer.stroke_color}")
+                self.box_color_button.setStyleSheet(f"background-color: {layer.box_color.split('@', 1)[0]}")
                 self.scale_value.setValue(1.0)
             if isinstance(layer, StickerLayer):
                 self.text_input.setText(Path(layer.file_path).name)
@@ -293,9 +318,10 @@ class MainWindow(QMainWindow):
             layer.stroke_width = self.stroke_width.value()
             layer.box_enabled = self.box_enabled.isChecked()
             layer.box_color = self.box_color.text()
+            layer.box_padding = self.box_padding.value()
         if isinstance(layer, StickerLayer):
             layer.scale = self.scale_value.value()
-        self.canvas.refresh()
+        self.canvas.refresh_overlays()
         self.timeline.refresh()
 
     def choose_text_color(self) -> None:
@@ -305,7 +331,59 @@ class MainWindow(QMainWindow):
         color = QColorDialog.getColor()
         if color.isValid():
             layer.color = color.name()
-            self.canvas.refresh()
+            self.color_button.setStyleSheet(f"background-color: {layer.color}")
+            self.canvas.refresh_overlays()
+
+
+    def choose_stroke_color(self) -> None:
+        layer = self._layer_by_id(self.selected_layer_id)
+        if not isinstance(layer, TextLayer):
+            return
+        color = QColorDialog.getColor()
+        if color.isValid():
+            layer.stroke_color = color.name()
+            self.stroke_color.setText(layer.stroke_color)
+            self.stroke_color_button.setStyleSheet(f"background-color: {layer.stroke_color}")
+            self.canvas.refresh_overlays()
+
+    def choose_box_color(self) -> None:
+        layer = self._layer_by_id(self.selected_layer_id)
+        if not isinstance(layer, TextLayer):
+            return
+        color = QColorDialog.getColor()
+        if color.isValid():
+            alpha = 0.5
+            if "@" in layer.box_color:
+                try:
+                    alpha = float(layer.box_color.split("@", 1)[1])
+                except ValueError:
+                    alpha = 0.5
+            layer.box_color = f"{color.name()}@{alpha}"
+            self.box_color.setText(layer.box_color)
+            self.box_color_button.setStyleSheet(f"background-color: {color.name()}")
+            self.canvas.refresh_overlays()
+
+    def _set_player_source(self, path: str) -> None:
+        self.player.stop()
+        self.player.setSource(QUrl.fromLocalFile(path))
+        if self.canvas.video_item is not None:
+            self.player.setVideoOutput(self.canvas.video_item)
+
+    def play_video(self) -> None:
+        if not self.project.video_path:
+            QMessageBox.warning(self, "Missing video", "Open a source video first.")
+            return
+        self.player.play()
+
+    def pause_video(self) -> None:
+        self.player.pause()
+
+    def stop_video(self) -> None:
+        self.player.stop()
+        self.canvas.set_time(0.0)
+
+    def update_preview_time(self, position_ms: int) -> None:
+        self.canvas.set_time(position_ms / 1000.0)
 
     def _load_templates(self) -> None:
         TEMPLATE_PATH.parent.mkdir(exist_ok=True)
@@ -349,20 +427,24 @@ class MainWindow(QMainWindow):
         if path:
             self.project = Project.load(path)
             self.selected_layer_id = None
+            if self.project.video_path:
+                self._set_player_source(self.project.video_path)
             self._refresh_all()
 
     def export_video(self) -> None:
         if not self.project.video_path:
             QMessageBox.warning(self, "Missing video", "Open a source video first.")
             return
-        path, _ = QFileDialog.getSaveFileName(self, "Export MP4", "output.mp4", "MP4 (*.mp4)")
-        if not path:
-            return
+        input_path = Path(self.project.video_path)
+        output_dir = input_path.parent / "output"
+        output_dir.mkdir(exist_ok=True)
+        path = output_dir / f"{input_path.stem}_output.mp4"
         self.log_view.clear()
+        self.log_view.append(f"Exporting to: {path}")
         try:
-            command = render_project(self.project, path, self.log_view.append)
+            command = render_project(self.project, str(path), self.log_view.append)
             self.log_view.append(command.shell_string())
-            QMessageBox.information(self, "Export complete", path)
+            QMessageBox.information(self, "Export complete", str(path))
         except Exception as exc:  # noqa: BLE001
             LOGGER.exception("Export failed")
             QMessageBox.critical(self, "Export failed", str(exc))

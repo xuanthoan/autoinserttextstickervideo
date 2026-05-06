@@ -3,10 +3,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Callable
 
-from PySide6.QtCore import QPointF, Qt, Signal
-from PySide6.QtGui import QBrush, QColor, QFont, QImage, QPainter, QPen, QPixmap
-from PySide6.QtWidgets import QGraphicsPixmapItem, QGraphicsRectItem, QGraphicsScene, QGraphicsTextItem, QGraphicsView
+from PySide6.QtCore import QRectF, QSizeF, Qt, Signal
+from PySide6.QtGui import QBrush, QColor, QFont, QFontMetricsF, QImage, QPainter, QPainterPath, QPen, QPixmap
+from PySide6.QtMultimediaWidgets import QGraphicsVideoItem
+from PySide6.QtWidgets import QGraphicsPixmapItem, QGraphicsRectItem, QGraphicsScene, QGraphicsTextItem, QGraphicsView, QStyleOptionGraphicsItem, QWidget
 
+from core.motion_engine import state_at
 from core.project_model import Project
 from core.sticker_layer import StickerLayer
 from core.text_layer import TextLayer
@@ -14,18 +16,68 @@ from core.text_layer import TextLayer
 SNAP_THRESHOLD = 10
 
 
+def _preview_color(value: str, fallback: str = "black") -> QColor:
+    if "@" not in value:
+        color = QColor(value)
+        return color if color.isValid() else QColor(fallback)
+    name, alpha = value.split("@", 1)
+    color = QColor(name)
+    if not color.isValid():
+        color = QColor(fallback)
+    try:
+        color.setAlphaF(max(0.0, min(1.0, float(alpha))))
+    except ValueError:
+        color.setAlphaF(1.0)
+    return color
+
+
 class LayerTextItem(QGraphicsTextItem):
-    def __init__(self, layer: TextLayer, on_move: Callable[[str, float, float], None]) -> None:
+    def __init__(self, layer: TextLayer, on_move: Callable[[str, float, float], None], current_time: float) -> None:
         super().__init__(layer.text)
+        motion = state_at(layer.motion_preset, current_time, layer.start_time, layer.motion_duration, layer.x, layer.y, layer.opacity, layer.easing)
         self.layer = layer
         self.on_move = on_move
-        self.setDefaultTextColor(QColor(layer.color.split("@")[0]))
+        self.setDefaultTextColor(_preview_color(layer.color, "white"))
         self.setFont(QFont("Arial", layer.font_size))
-        self.setOpacity(layer.opacity)
+        self.setOpacity(motion.alpha)
         self.setRotation(layer.rotation)
+        self.setScale(motion.scale)
         self.setFlag(QGraphicsTextItem.GraphicsItemFlag.ItemIsMovable)
         self.setFlag(QGraphicsTextItem.GraphicsItemFlag.ItemIsSelectable)
-        self.setPos(layer.x, layer.y)
+        self.setPos(motion.x if motion.x is not None else layer.x, motion.y if motion.y is not None else layer.y)
+        self.setZValue(20)
+
+    def _text_rect(self) -> QRectF:
+        metrics = QFontMetricsF(self.font())
+        return metrics.boundingRect(self.toPlainText()).adjusted(0, 0, 8, metrics.descent() + 8)
+
+    def boundingRect(self) -> QRectF:
+        rect = self._text_rect()
+        stroke = self.layer.stroke_width
+        rect = rect.adjusted(-stroke, -stroke, stroke, stroke)
+        if self.layer.box_enabled:
+            padding = self.layer.box_padding
+            return rect.adjusted(-padding, -padding, padding, padding)
+        return rect
+
+    def paint(self, painter: QPainter, option: QStyleOptionGraphicsItem, widget: QWidget | None = None) -> None:
+        del option, widget
+        painter.save()
+        if self.layer.box_enabled:
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(_preview_color(self.layer.box_color, "black")))
+            painter.drawRect(self.boundingRect())
+        path = QPainterPath()
+        metrics = QFontMetricsF(self.font())
+        path.addText(0, metrics.ascent(), self.font(), self.toPlainText())
+        if self.layer.stroke_width > 0:
+            painter.setPen(QPen(_preview_color(self.layer.stroke_color, "black"), self.layer.stroke_width * 2))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawPath(path)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(_preview_color(self.layer.color, "white")))
+        painter.drawPath(path)
+        painter.restore()
 
     def mouseReleaseEvent(self, event) -> None:  # type: ignore[no-untyped-def]
         pos = self.pos()
@@ -34,21 +86,23 @@ class LayerTextItem(QGraphicsTextItem):
 
 
 class LayerStickerItem(QGraphicsPixmapItem):
-    def __init__(self, layer: StickerLayer, on_move: Callable[[str, float, float], None]) -> None:
+    def __init__(self, layer: StickerLayer, on_move: Callable[[str, float, float], None], current_time: float) -> None:
         pixmap = QPixmap(layer.file_path) if layer.file_path and Path(layer.file_path).exists() else QPixmap(160, 100)
         if pixmap.isNull():
             pixmap = QPixmap(160, 100)
         if layer.file_path == "" or pixmap.size().width() == 160 and pixmap.size().height() == 100:
             pixmap.fill(QColor("#ffcc00"))
+        motion = state_at(layer.motion_preset, current_time, layer.start_time, layer.motion_duration, layer.x, layer.y, layer.opacity, layer.easing)
         super().__init__(pixmap)
         self.layer = layer
         self.on_move = on_move
-        self.setOpacity(layer.opacity)
-        self.setScale(layer.scale)
+        self.setOpacity(motion.alpha)
+        self.setScale(layer.scale * motion.scale)
         self.setRotation(layer.rotation)
         self.setFlag(QGraphicsPixmapItem.GraphicsItemFlag.ItemIsMovable)
         self.setFlag(QGraphicsPixmapItem.GraphicsItemFlag.ItemIsSelectable)
-        self.setPos(layer.x, layer.y)
+        self.setPos(motion.x if motion.x is not None else layer.x, motion.y if motion.y is not None else layer.y)
+        self.setZValue(30)
 
     def mouseReleaseEvent(self, event) -> None:  # type: ignore[no-untyped-def]
         pos = self.pos()
@@ -59,6 +113,7 @@ class LayerStickerItem(QGraphicsPixmapItem):
 class PreviewCanvas(QGraphicsView):
     layerMoved = Signal(str, float, float)
     filesDropped = Signal(list)
+    videoOutputChanged = Signal(object)
 
     def __init__(self) -> None:
         super().__init__()
@@ -67,7 +122,10 @@ class PreviewCanvas(QGraphicsView):
         self.setRenderHints(QPainter.RenderHint.Antialiasing | QPainter.RenderHint.SmoothPixmapTransform)
         self.setAcceptDrops(True)
         self.project: Project | None = None
-        self.video_item: QGraphicsRectItem | None = None
+        self.current_time = 0.0
+        self.video_item: QGraphicsVideoItem | None = None
+        self.video_backdrop: QGraphicsRectItem | None = None
+        self.overlay_items: list[LayerTextItem | LayerStickerItem] = []
         self.center_v = self.scene.addLine(0, 0, 0, 0, QPen(QColor("#00d1ff"), 1, Qt.PenStyle.DashLine))
         self.center_h = self.scene.addLine(0, 0, 0, 0, QPen(QColor("#00d1ff"), 1, Qt.PenStyle.DashLine))
         self.center_v.hide()
@@ -75,22 +133,50 @@ class PreviewCanvas(QGraphicsView):
 
     def set_project(self, project: Project) -> None:
         self.project = project
+        self.current_time = 0.0
         self.refresh()
+
+    def set_time(self, seconds: float) -> None:
+        self.current_time = seconds
+        self.refresh_overlays()
 
     def refresh(self) -> None:
         self.scene.clear()
+        self.overlay_items = []
         if self.project is None:
             return
-        self.video_item = self.scene.addRect(0, 0, self.project.width, self.project.height, QPen(QColor("#555")), QBrush(QColor("#111")))
-        for layer in self.project.text_layers:
-            self.scene.addItem(LayerTextItem(layer, self._snap_and_emit))
-        for layer in self.project.sticker_layers:
-            self.scene.addItem(LayerStickerItem(layer, self._snap_and_emit))
+        self.video_backdrop = self.scene.addRect(0, 0, self.project.width, self.project.height, QPen(QColor("#555")), QBrush(QColor("#111")))
+        self.video_backdrop.setZValue(-20)
+        self.video_item = QGraphicsVideoItem()
+        self.video_item.setSize(QSizeF(self.project.width, self.project.height))
+        self.video_item.setZValue(-10)
+        self.scene.addItem(self.video_item)
+        self.videoOutputChanged.emit(self.video_item)
         self.center_v = self.scene.addLine(self.project.width / 2, 0, self.project.width / 2, self.project.height, QPen(QColor("#00d1ff"), 1, Qt.PenStyle.DashLine))
         self.center_h = self.scene.addLine(0, self.project.height / 2, self.project.width, self.project.height / 2, QPen(QColor("#00d1ff"), 1, Qt.PenStyle.DashLine))
+        self.center_v.setZValue(100)
+        self.center_h.setZValue(100)
         self.center_v.hide()
         self.center_h.hide()
+        self.refresh_overlays()
         self.fitInView(self.scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
+
+    def refresh_overlays(self) -> None:
+        if self.project is None:
+            return
+        for item in self.overlay_items:
+            self.scene.removeItem(item)
+        self.overlay_items = []
+        for layer in self.project.text_layers:
+            if layer.start_time <= self.current_time <= layer.end_time:
+                item = LayerTextItem(layer, self._snap_and_emit, self.current_time)
+                self.overlay_items.append(item)
+                self.scene.addItem(item)
+        for layer in self.project.sticker_layers:
+            if layer.start_time <= self.current_time <= layer.end_time:
+                item = LayerStickerItem(layer, self._snap_and_emit, self.current_time)
+                self.overlay_items.append(item)
+                self.scene.addItem(item)
 
     def _snap_and_emit(self, layer_id: str, x: float, y: float) -> None:
         if self.project is None:
