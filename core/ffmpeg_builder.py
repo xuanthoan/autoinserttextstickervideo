@@ -64,7 +64,7 @@ def _text_drawtext_fallback(layer: TextLayer, source_label: str, index: int, wid
         f"color=c=black@0.0:s={width}x{height}:d={max(duration, layer.end_time, 1)}[txtsrc{index}];"
         f"[txtsrc{index}]drawtext=text='{_escape_drawtext(layer.text.upper() if layer.auto_uppercase else layer.text)}'"
         f"{_fontfile(layer)}{_font_family(layer)}:fontsize={layer.font_size}:fontcolor={_ffmpeg_color(layer.color)}"
-        f":borderw={layer.stroke_width}:bordercolor={_ffmpeg_color(layer.stroke_color)}"
+        f":borderw={(layer.stroke_width if layer.stroke_enabled else 0)}:bordercolor={_ffmpeg_color(layer.stroke_color)}"
         f":x={padding}:y={y}:alpha='{alpha}'"
     )
     if layer.box_enabled:

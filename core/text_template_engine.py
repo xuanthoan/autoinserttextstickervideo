@@ -231,12 +231,13 @@ class TextTemplateEngine:
         return [template for template in self.templates if template.enabled]
 
     def by_id_or_name(self, value: str | None) -> TextTemplate:
-        enabled = self.enabled_templates() or self.templates or DEFAULT_TEMPLATES
+        candidates = self.templates or DEFAULT_TEMPLATES
         if value:
-            for template in enabled:
+            for template in candidates:
                 if template.template_id == value or template.name == value:
                     return template
-        return enabled[0]
+        enabled = self.enabled_templates()
+        return (enabled or candidates)[0]
 
     def duplicate_template(self, template_id: str, new_name: str) -> TextTemplate:
         original = self.by_id_or_name(template_id)
@@ -396,13 +397,20 @@ class TextTemplateEngine:
         painter.setBrush(background)
         painter.drawRoundedRect(rect_x, rect_y, layout.box_width, layout.box_height, layout.border_radius, layout.border_radius)
 
-        painter.setPen(QPen(text_color))
         metrics = painter.fontMetrics()
         y = rect_y + layout.vertical_padding + metrics.ascent()
         for line in layout.lines:
             line_width = metrics.horizontalAdvance(line)
             x = rect_x + (layout.box_width - line_width) / 2
-            painter.drawText(round(x), round(y), line)
+            path = QPainterPath()
+            path.addText(x, y, font, line)
+            if layer.stroke_enabled and layer.stroke_width > 0:
+                painter.setPen(QPen(_qt_color(layer.stroke_color), layer.stroke_width * 2))
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+                painter.drawPath(path)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(text_color)
+            painter.drawPath(path)
             y += metrics.height() + layout.line_spacing
         painter.end()
 

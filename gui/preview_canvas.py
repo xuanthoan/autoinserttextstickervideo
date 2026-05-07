@@ -75,7 +75,7 @@ class LayerTextItem(QGraphicsTextItem):
             x = (self.layout_data.box_width - line_width) / 2 if self.layer.box_enabled else 0
             path = QPainterPath()
             path.addText(x, baseline, self.font(), line)
-            if self.layer.stroke_width > 0:
+            if self.layer.stroke_enabled and self.layer.stroke_width > 0:
                 painter.setPen(QPen(_preview_color(self.layer.stroke_color, "black"), self.layer.stroke_width * 2))
                 painter.setBrush(Qt.BrushStyle.NoBrush)
                 painter.drawPath(path)

@@ -17,8 +17,9 @@ class TextLayer:
     font_weight: int = 800
     font_size: int = 48
     color: str = "white"
+    stroke_enabled: bool = False
     stroke_color: str = "black"
-    stroke_width: int = 2
+    stroke_width: int = 0
     box_enabled: bool = False
     box_color: str = "black@0.5"
     box_padding: int = 10

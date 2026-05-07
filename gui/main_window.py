@@ -3,25 +3,30 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from PySide6.QtCore import QUrl, Qt
+from PySide6.QtCore import QThread, QUrl, Qt
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtWidgets import (
     QCheckBox,
-    QColorDialog,
+    QAbstractItemView,
     QComboBox,
     QDockWidget,
     QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
     QInputDialog,
+    QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QMainWindow,
     QMessageBox,
+    QProgressBar,
     QPushButton,
     QSpinBox,
     QTextEdit,
     QToolBar,
+    QVBoxLayout,
     QWidget,
 )
 
@@ -30,6 +35,7 @@ from core.renderer import render_project
 from core.sticker_layer import StickerLayer
 from core.text_layer import TextLayer
 from core.text_template_engine import TextTemplate, TextTemplateEngine
+from gui.batch_worker import BatchRenderWorker
 from gui.preview_canvas import PreviewCanvas
 from gui.timeline_panel import TimelinePanel
 from utils.ffmpeg_helper import probe_video
@@ -45,6 +51,9 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("Auto Insert Text Sticker Video")
         self.project = Project()
+        self.video_queue: list[str] = []
+        self.batch_thread: QThread | None = None
+        self.batch_worker: BatchRenderWorker | None = None
         self.selected_layer_id: str | None = None
         self.canvas = PreviewCanvas()
         self.timeline = TimelinePanel()
@@ -66,6 +75,7 @@ class MainWindow(QMainWindow):
         self.addToolBar(toolbar)
         actions = [
             ("Open Video", self.open_video),
+            ("Add Videos", self.add_videos_to_queue),
             ("Play", self.play_video),
             ("Pause", self.pause_video),
             ("Stop", self.stop_video),
@@ -74,6 +84,7 @@ class MainWindow(QMainWindow):
             ("Save Project", self.save_project),
             ("Load Project", self.load_project),
             ("Export MP4", self.export_video),
+            ("Render Batch", self.render_batch),
         ]
         for label, callback in actions:
             action = toolbar.addAction(label)
@@ -92,14 +103,10 @@ class MainWindow(QMainWindow):
         self.font_path = QLineEdit()
         self.font_size = QSpinBox()
         self.font_size.setRange(1, 400)
-        self.color_button = QPushButton("Choose")
-        self.stroke_color = QLineEdit("black")
-        self.stroke_color_button = QPushButton("Choose stroke")
+        self.stroke_enabled = QCheckBox()
         self.stroke_width = QSpinBox()
         self.stroke_width.setRange(0, 50)
         self.box_enabled = QCheckBox()
-        self.box_color = QLineEdit("black@0.5")
-        self.box_color_button = QPushButton("Choose background")
         self.box_padding = QSpinBox()
         self.box_padding.setRange(0, 200)
         self.opacity = QDoubleSpinBox()
@@ -128,13 +135,9 @@ class MainWindow(QMainWindow):
             ("Text", self.text_input),
             ("Font path", self.font_path),
             ("Font size", self.font_size),
-            ("Text color", self.color_button),
-            ("Stroke color", self.stroke_color),
-            ("", self.stroke_color_button),
+            ("Stroke", self.stroke_enabled),
             ("Stroke width", self.stroke_width),
             ("Background", self.box_enabled),
-            ("Background color", self.box_color),
-            ("", self.box_color_button),
             ("Min background padding", self.box_padding),
             ("Opacity", self.opacity),
             ("X", self.x_value),
@@ -151,9 +154,114 @@ class MainWindow(QMainWindow):
         inspector_dock.setWidget(self.inspector)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, inspector_dock)
 
+        self._build_batch_dock()
+        self._build_template_dock()
+
         log_dock = QDockWidget("Render Log", self)
         log_dock.setWidget(self.log_view)
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, log_dock)
+
+
+    def _build_batch_dock(self) -> None:
+        batch_dock = QDockWidget("Batch Queue", self)
+        panel = QWidget()
+        layout = QVBoxLayout(panel)
+        self.video_queue_widget = QListWidget()
+        self.video_queue_widget.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.video_queue_widget.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
+        self.video_queue_widget.itemDoubleClicked.connect(lambda item: self.load_video_from_queue(item.data(Qt.ItemDataRole.UserRole)))
+        controls = QHBoxLayout()
+        for label, callback in [
+            ("Add", self.add_videos_to_queue),
+            ("Remove", self.remove_selected_videos),
+            ("Clear", self.clear_video_queue),
+            ("Render All", self.render_batch),
+        ]:
+            button = QPushButton(label)
+            button.clicked.connect(callback)
+            controls.addWidget(button)
+        self.video_progress = QProgressBar()
+        self.video_progress.setFormat("Current video: %p%")
+        self.batch_progress = QProgressBar()
+        self.batch_progress.setFormat("Batch: %v/%m")
+        layout.addWidget(QLabel("Drag videos here or use Add. Drag rows to reorder."))
+        layout.addWidget(self.video_queue_widget)
+        layout.addLayout(controls)
+        layout.addWidget(self.video_progress)
+        layout.addWidget(self.batch_progress)
+        batch_dock.setWidget(panel)
+        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, batch_dock)
+
+    def _build_template_dock(self) -> None:
+        template_dock = QDockWidget("Text Templates", self)
+        panel = QWidget()
+        self.template_layout = QVBoxLayout(panel)
+        self.template_list = QListWidget()
+        self.template_list.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
+        self.template_list.model().rowsMoved.connect(self.persist_template_order)
+        self.template_layout.addWidget(QLabel("Enable templates for random batch assignment."))
+        self.template_layout.addWidget(self.template_list)
+        template_dock.setWidget(panel)
+        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, template_dock)
+
+    def refresh_template_panel(self) -> None:
+        if not hasattr(self, "template_list"):
+            return
+        self.template_list.clear()
+        for template in self.template_engine.templates:
+            item = QListWidgetItem()
+            item.setData(Qt.ItemDataRole.UserRole, template.template_id)
+            row = QWidget()
+            row_layout = QHBoxLayout(row)
+            row_layout.setContentsMargins(4, 2, 4, 2)
+            preview = QLabel("   ")
+            preview.setStyleSheet(f"background-color: {template.background_color}; color: {template.text_color}; border-radius: 8px; padding: 8px; font-weight: 800;")
+            enabled = QCheckBox()
+            enabled.setChecked(template.enabled)
+            enabled.toggled.connect(lambda checked, tid=template.template_id: self.set_template_enabled(tid, checked))
+            name = QLabel(template.name)
+            duplicate = QPushButton("Duplicate")
+            duplicate.clicked.connect(lambda checked=False, tid=template.template_id: self.duplicate_template(tid))
+            reset = QPushButton("Reset")
+            reset.clicked.connect(lambda checked=False, tid=template.template_id: self.reset_template(tid))
+            row_layout.addWidget(preview)
+            row_layout.addWidget(enabled)
+            row_layout.addWidget(name, 1)
+            row_layout.addWidget(duplicate)
+            row_layout.addWidget(reset)
+            item.setSizeHint(row.sizeHint())
+            self.template_list.addItem(item)
+            self.template_list.setItemWidget(item, row)
+
+    def set_template_enabled(self, template_id: str, enabled: bool) -> None:
+        self.template_engine.set_template_enabled(template_id, enabled)
+        self.template_engine.save(TEMPLATE_PATH)
+        self._load_templates()
+
+    def duplicate_template(self, template_id: str) -> None:
+        name, ok = QInputDialog.getText(self, "Duplicate template", "New template name")
+        if not ok or not name:
+            return
+        self.template_engine.duplicate_template(template_id, name)
+        self.template_engine.save(TEMPLATE_PATH)
+        self._load_templates()
+
+    def reset_template(self, template_id: str) -> None:
+        defaults = TextTemplateEngine().templates
+        for default in defaults:
+            if default.template_id == template_id:
+                self.template_engine.templates = [default if item.template_id == template_id else item for item in self.template_engine.templates]
+                self.template_engine.save(TEMPLATE_PATH)
+                self._load_templates()
+                return
+
+    def persist_template_order(self) -> None:
+        if not hasattr(self, "template_list"):
+            return
+        ids = [self.template_list.item(row).data(Qt.ItemDataRole.UserRole) for row in range(self.template_list.count())]
+        self.template_engine.reorder_templates(ids)
+        self.template_engine.save(TEMPLATE_PATH)
+        self._load_templates()
 
     def _connect_signals(self) -> None:
         self.canvas.layerMoved.connect(self.move_layer)
@@ -165,12 +273,9 @@ class MainWindow(QMainWindow):
         self.text_input.editingFinished.connect(self.apply_inspector)
         self.font_path.editingFinished.connect(self.apply_inspector)
         self.font_size.valueChanged.connect(self.apply_inspector)
-        self.stroke_color.editingFinished.connect(self.apply_inspector)
-        self.stroke_color_button.clicked.connect(self.choose_stroke_color)
+        self.stroke_enabled.stateChanged.connect(self.apply_inspector)
         self.stroke_width.valueChanged.connect(self.apply_inspector)
         self.box_enabled.stateChanged.connect(self.apply_inspector)
-        self.box_color.editingFinished.connect(self.apply_inspector)
-        self.box_color_button.clicked.connect(self.choose_box_color)
         self.box_padding.valueChanged.connect(self.apply_inspector)
         self.opacity.valueChanged.connect(self.apply_inspector)
         self.x_value.valueChanged.connect(self.apply_inspector)
@@ -180,7 +285,6 @@ class MainWindow(QMainWindow):
         self.motion.currentTextChanged.connect(self.apply_inspector)
         self.motion_duration.valueChanged.connect(self.apply_inspector)
         self.easing.currentTextChanged.connect(self.apply_inspector)
-        self.color_button.clicked.connect(self.choose_text_color)
         self.template_combo.currentTextChanged.connect(self.apply_template)
         self.save_template_button.clicked.connect(self.save_current_template)
 
@@ -195,8 +299,46 @@ class MainWindow(QMainWindow):
                 return layer
         return None
 
-    def open_video(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, "Open video", "", "Video (*.mp4 *.mov *.mkv *.avi)")
+
+    def add_videos_to_queue(self) -> None:
+        paths, _ = QFileDialog.getOpenFileNames(self, "Add videos to batch", "", "Video (*.mp4 *.mov *.mkv *.avi)")
+        self._add_queue_paths(paths)
+        if paths and not self.project.video_path:
+            self.load_video_from_queue(paths[0])
+
+    def _add_queue_paths(self, paths: list[str]) -> None:
+        video_paths = [str(Path(path)) for path in paths if Path(path).suffix.lower() in {".mp4", ".mov", ".mkv", ".avi"}]
+        existing = set(self.video_queue)
+        for path in video_paths:
+            if path in existing:
+                continue
+            self.video_queue.append(path)
+            if hasattr(self, "video_queue_widget"):
+                item = QListWidgetItem(Path(path).name)
+                item.setToolTip(path)
+                item.setData(Qt.ItemDataRole.UserRole, path)
+                self.video_queue_widget.addItem(item)
+            existing.add(path)
+        self.batch_progress.setMaximum(max(1, len(self.video_queue))) if hasattr(self, "batch_progress") else None
+
+    def _queue_from_widget(self) -> list[str]:
+        if not hasattr(self, "video_queue_widget"):
+            return list(self.video_queue)
+        self.video_queue = [self.video_queue_widget.item(row).data(Qt.ItemDataRole.UserRole) for row in range(self.video_queue_widget.count())]
+        return list(self.video_queue)
+
+    def remove_selected_videos(self) -> None:
+        for item in self.video_queue_widget.selectedItems():
+            self.video_queue_widget.takeItem(self.video_queue_widget.row(item))
+        self._queue_from_widget()
+
+    def clear_video_queue(self) -> None:
+        self.video_queue.clear()
+        self.video_queue_widget.clear()
+        self.batch_progress.setValue(0)
+        self.video_progress.setValue(0)
+
+    def load_video_from_queue(self, path: str) -> None:
         if not path:
             return
         try:
@@ -210,8 +352,82 @@ class MainWindow(QMainWindow):
         except Exception as exc:  # noqa: BLE001
             QMessageBox.critical(self, "FFprobe error", str(exc))
 
+    def render_batch(self) -> None:
+        queue = self._queue_from_widget()
+        if not queue:
+            QMessageBox.warning(self, "Empty batch", "Add one or more videos to the batch queue first.")
+            return
+        if self.batch_thread is not None:
+            QMessageBox.information(self, "Batch running", "A batch render is already running.")
+            return
+        if not self.template_engine.enabled_templates():
+            QMessageBox.warning(self, "No templates enabled", "Enable at least one text template before batch rendering.")
+            return
+        if not self.project.text_layers:
+            self.add_text()
+        self.log_view.clear()
+        self.video_progress.setRange(0, 0)
+        self.batch_progress.setRange(0, len(queue))
+        self.batch_progress.setValue(0)
+        self.batch_thread = QThread(self)
+        self.batch_worker = BatchRenderWorker(self.project, queue, self.template_engine)
+        self.batch_worker.moveToThread(self.batch_thread)
+        self.batch_thread.started.connect(self.batch_worker.run)
+        self.batch_worker.logLine.connect(self.log_view.append)
+        self.batch_worker.videoStarted.connect(self.on_batch_video_started)
+        self.batch_worker.videoFinished.connect(self.on_batch_video_finished)
+        self.batch_worker.videoFailed.connect(self.on_batch_video_failed)
+        self.batch_worker.overallProgress.connect(self.on_batch_progress)
+        self.batch_worker.finished.connect(self.on_batch_finished)
+        self.batch_worker.finished.connect(self.batch_thread.quit)
+        self.batch_worker.finished.connect(self.batch_worker.deleteLater)
+        self.batch_thread.finished.connect(self.batch_thread.deleteLater)
+        self.batch_thread.start()
+
+    def on_batch_video_started(self, index: int, total: int, path: str) -> None:
+        self.video_progress.setRange(0, 0)
+        self.log_view.append(f"Starting {index}/{total}: {Path(path).name}")
+
+    def on_batch_video_finished(self, index: int, total: int, output_path: str) -> None:
+        self.video_progress.setRange(0, 100)
+        self.video_progress.setValue(100)
+        self.log_view.append(f"Finished {index}/{total}: {output_path}")
+
+    def on_batch_video_failed(self, index: int, total: int, path: str, error: str) -> None:
+        self.video_progress.setRange(0, 100)
+        self.video_progress.setValue(0)
+        self.log_view.append(f"Failed {index}/{total}: {path}\n{error}")
+
+    def on_batch_progress(self, done: int, total: int) -> None:
+        self.batch_progress.setMaximum(total)
+        self.batch_progress.setValue(done)
+
+    def on_batch_finished(self) -> None:
+        self.video_progress.setRange(0, 100)
+        self.video_progress.setValue(0)
+        self.log_view.append("Batch render complete.")
+        self.batch_thread = None
+        self.batch_worker = None
+
+    def open_video(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(self, "Open video", "", "Video (*.mp4 *.mov *.mkv *.avi)")
+        if not path:
+            return
+        try:
+            metadata = probe_video(path)
+            self.project.video_path = path
+            self.project.width = int(metadata["width"])
+            self.project.height = int(metadata["height"])
+            self.project.duration = float(metadata["duration"])
+            self._set_player_source(path)
+            self._add_queue_paths([path])
+            self._refresh_all()
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.critical(self, "FFprobe error", str(exc))
+
     def add_text(self) -> None:
-        layer = self.project.add_text_layer(TextLayer(x=self.project.width / 2 - 150, y=self.project.height / 2))
+        layer = self.project.add_text_layer(TextLayer(x=self.project.width / 2 - 150, y=self.project.height / 2, stroke_enabled=False, stroke_width=0))
+        self.template_engine.apply_to_layer(layer, self.template_engine.by_id_or_name("orange-white"), permanent=False)
         self.selected_layer_id = layer.layer_id
         self._refresh_all()
 
@@ -234,6 +450,7 @@ class MainWindow(QMainWindow):
                     self.project.height = int(metadata["height"])
                     self.project.duration = float(metadata["duration"])
                     self._set_player_source(path)
+                    self._add_queue_paths([path])
                 except Exception as exc:  # noqa: BLE001
                     self.log_view.append(f"Probe failed: {exc}")
             elif suffix in {".png", ".jpg", ".jpeg", ".webp"}:
@@ -283,14 +500,10 @@ class MainWindow(QMainWindow):
                 self.font_path.setText(layer.font_path)
                 self.font_size.setValue(layer.font_size)
                 self.template_combo.setCurrentText(self.template_engine.by_id_or_name(layer.template_id).name)
-                self.stroke_color.setText(layer.stroke_color)
+                self.stroke_enabled.setChecked(layer.stroke_enabled)
                 self.stroke_width.setValue(layer.stroke_width)
                 self.box_enabled.setChecked(layer.box_enabled)
-                self.box_color.setText(layer.box_color)
                 self.box_padding.setValue(layer.box_padding)
-                self.color_button.setStyleSheet(f"background-color: {layer.color}")
-                self.stroke_color_button.setStyleSheet(f"background-color: {layer.stroke_color}")
-                self.box_color_button.setStyleSheet(f"background-color: {layer.box_color.split('@', 1)[0]}")
                 self.scale_value.setValue(1.0)
             if isinstance(layer, StickerLayer):
                 self.text_input.setText(Path(layer.file_path).name)
@@ -315,54 +528,14 @@ class MainWindow(QMainWindow):
             layer.text = self.text_input.text()
             layer.font_path = self.font_path.text()
             layer.font_size = self.font_size.value()
-            layer.stroke_color = self.stroke_color.text()
-            layer.stroke_width = self.stroke_width.value()
+            layer.stroke_enabled = self.stroke_enabled.isChecked()
+            layer.stroke_width = self.stroke_width.value() if layer.stroke_enabled else 0
             layer.box_enabled = self.box_enabled.isChecked()
-            layer.box_color = self.box_color.text()
             layer.box_padding = self.box_padding.value()
         if isinstance(layer, StickerLayer):
             layer.scale = self.scale_value.value()
         self.canvas.refresh_overlays()
         self.timeline.refresh()
-
-    def choose_text_color(self) -> None:
-        layer = self._layer_by_id(self.selected_layer_id)
-        if not isinstance(layer, TextLayer):
-            return
-        color = QColorDialog.getColor()
-        if color.isValid():
-            layer.color = color.name()
-            self.color_button.setStyleSheet(f"background-color: {layer.color}")
-            self.canvas.refresh_overlays()
-
-
-    def choose_stroke_color(self) -> None:
-        layer = self._layer_by_id(self.selected_layer_id)
-        if not isinstance(layer, TextLayer):
-            return
-        color = QColorDialog.getColor()
-        if color.isValid():
-            layer.stroke_color = color.name()
-            self.stroke_color.setText(layer.stroke_color)
-            self.stroke_color_button.setStyleSheet(f"background-color: {layer.stroke_color}")
-            self.canvas.refresh_overlays()
-
-    def choose_box_color(self) -> None:
-        layer = self._layer_by_id(self.selected_layer_id)
-        if not isinstance(layer, TextLayer):
-            return
-        color = QColorDialog.getColor()
-        if color.isValid():
-            alpha = 0.5
-            if "@" in layer.box_color:
-                try:
-                    alpha = float(layer.box_color.split("@", 1)[1])
-                except ValueError:
-                    alpha = 0.5
-            layer.box_color = f"{color.name()}@{alpha}"
-            self.box_color.setText(layer.box_color)
-            self.box_color_button.setStyleSheet(f"background-color: {color.name()}")
-            self.canvas.refresh_overlays()
 
     def _set_player_source(self, path: str) -> None:
         self.player.stop()
@@ -395,6 +568,7 @@ class MainWindow(QMainWindow):
         self.template_combo.addItem("")
         self.template_combo.addItems([template.name for template in self.template_engine.enabled_templates()])
         self.template_combo.blockSignals(False)
+        self.refresh_template_panel()
 
     def apply_template(self, name: str) -> None:
         layer = self._layer_by_id(self.selected_layer_id)
