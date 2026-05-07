@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import logging
 import time
 from pathlib import Path
 
@@ -32,7 +31,6 @@ from PySide6.QtWidgets import (
 )
 
 from core.project_model import Project
-from core.renderer import render_project
 from core.sticker_layer import StickerLayer
 from core.text_layer import TextLayer
 from core.text_template_engine import TextTemplate, TextTemplateEngine
@@ -40,10 +38,8 @@ from gui.batch_worker import BatchRenderWorker
 from gui.preview_canvas import PreviewCanvas
 from gui.timeline_panel import TimelinePanel
 from utils.ffmpeg_helper import probe_video
-from utils.output_naming import unique_output_path
 from utils.paths import resource_path
 
-LOGGER = logging.getLogger(__name__)
 TEMPLATE_PATH = resource_path("templates/text_templates.json")
 MOTION_PRESETS = ["none", "fade_in", "fade_out", "slide_left", "slide_right", "slide_up", "slide_down", "zoom_in", "zoom_out", "bounce", "pop"]
 EASINGS = ["linear", "ease-in", "ease-out", "ease-in-out"]
@@ -90,13 +86,14 @@ class MainWindow(QMainWindow):
             ("Add Sticker", self.add_sticker),
             ("Save Project", self.save_project),
             ("Load Project", self.load_project),
-            ("Export MP4", self.export_video),
-            ("Render Batch", self.render_batch),
+            ("Render Video (0)", self.render_queue),
             ("Open Output Folder", self.open_output_folder),
         ]
         for label, callback in actions:
             action = toolbar.addAction(label)
             action.triggered.connect(callback)
+            if callback == self.render_queue:
+                self.render_action = action
 
     def _build_docks(self) -> None:
         timeline_dock = QDockWidget("Timeline", self)
@@ -183,21 +180,25 @@ class MainWindow(QMainWindow):
             ("Add", self.add_videos_to_queue),
             ("Remove", self.remove_selected_videos),
             ("Clear", self.clear_video_queue),
-            ("Render All", self.render_batch),
             ("Cancel", self.cancel_batch),
             ("Open Output", self.open_output_folder),
         ]:
             button = QPushButton(label)
             button.clicked.connect(callback)
             controls.addWidget(button)
+        self.render_button = QPushButton("Render Video (0)")
+        self.render_button.clicked.connect(self.render_queue)
+        controls.addWidget(self.render_button)
+        self.current_file_label = QLabel("Current: --")
         self.video_progress = QProgressBar()
         self.video_progress.setFormat("Current video: %p%")
         self.batch_progress = QProgressBar()
-        self.batch_progress.setFormat("Batch: %v/%m")
+        self.batch_progress.setFormat("Overall: %v/%m | Remaining: %m")
         self.batch_eta_label = QLabel("Elapsed: 00:00 | ETA: --:--")
         layout.addWidget(QLabel("Drag videos here or use Add. Drag rows to reorder."))
         layout.addWidget(self.video_queue_widget)
         layout.addLayout(controls)
+        layout.addWidget(self.current_file_label)
         layout.addWidget(self.video_progress)
         layout.addWidget(self.batch_progress)
         layout.addWidget(self.batch_eta_label)
@@ -340,6 +341,7 @@ class MainWindow(QMainWindow):
                 self.video_queue_widget.addItem(item)
             existing.add(path)
         self.batch_progress.setMaximum(max(1, len(self.video_queue))) if hasattr(self, "batch_progress") else None
+        self._update_render_button_idle()
 
     def _queue_from_widget(self) -> list[str]:
         if not hasattr(self, "video_queue_widget"):
@@ -351,12 +353,14 @@ class MainWindow(QMainWindow):
         for item in self.video_queue_widget.selectedItems():
             self.video_queue_widget.takeItem(self.video_queue_widget.row(item))
         self._queue_from_widget()
+        self._update_render_button_idle()
 
     def clear_video_queue(self) -> None:
         self.video_queue.clear()
         self.video_queue_widget.clear()
         self.batch_progress.setValue(0)
         self.video_progress.setValue(0)
+        self._update_render_button_idle()
 
     def load_video_from_queue(self, path: str) -> None:
         if not path:
@@ -372,10 +376,13 @@ class MainWindow(QMainWindow):
         except Exception as exc:  # noqa: BLE001
             QMessageBox.critical(self, "FFprobe error", str(exc))
 
-    def render_batch(self) -> None:
+    def render_queue(self) -> None:
         queue = self._queue_from_widget()
+        if not queue and self.project.video_path:
+            queue = [self.project.video_path]
+            self._add_queue_paths(queue)
         if not queue:
-            QMessageBox.warning(self, "Empty batch", "Add one or more videos to the batch queue first.")
+            QMessageBox.warning(self, "Empty render queue", "Open or add at least one video before rendering.")
             return
         if self.batch_thread is not None:
             QMessageBox.information(self, "Batch running", "A batch render is already running.")
@@ -386,6 +393,7 @@ class MainWindow(QMainWindow):
         if not self.project.text_layers:
             self.add_text()
         self.log_view.clear()
+        self._set_render_controls_enabled(False)
         self.video_progress.setRange(0, 0)
         self.batch_started_at = time.monotonic()
         self.batch_progress.setRange(0, len(queue))
@@ -406,6 +414,25 @@ class MainWindow(QMainWindow):
         self.batch_thread.finished.connect(self.batch_thread.deleteLater)
         self.batch_thread.start()
 
+
+    def _render_count(self) -> int:
+        if hasattr(self, "video_queue_widget"):
+            return self.video_queue_widget.count()
+        return len(self.video_queue) or (1 if self.project.video_path else 0)
+
+    def _update_render_button_idle(self, label: str | None = None) -> None:
+        text = label or f"Render Video ({self._render_count()})"
+        if hasattr(self, "render_button"):
+            self.render_button.setText(text)
+        if hasattr(self, "render_action"):
+            self.render_action.setText(text)
+
+    def _set_render_controls_enabled(self, enabled: bool) -> None:
+        if hasattr(self, "render_button"):
+            self.render_button.setEnabled(enabled)
+        if hasattr(self, "render_action"):
+            self.render_action.setEnabled(enabled)
+
     def cancel_batch(self) -> None:
         if self.batch_worker is not None:
             self.batch_worker.cancel()
@@ -413,6 +440,9 @@ class MainWindow(QMainWindow):
 
     def on_batch_video_started(self, index: int, total: int, path: str) -> None:
         self.video_progress.setRange(0, 0)
+        self.current_file_label.setText(f"Current: {Path(path).name}")
+        self.batch_progress.setFormat(f"Overall: %v/%m | Remaining: {max(0, total - index + 1)}")
+        self._update_render_button_idle(f"Rendering... {index}/{total}")
         self.log_view.append(f"Starting {index}/{total}: {Path(path).name}")
 
     def on_batch_video_progress(self, percent: float) -> None:
@@ -433,6 +463,7 @@ class MainWindow(QMainWindow):
     def on_batch_progress(self, done: int, total: int) -> None:
         self.batch_progress.setMaximum(total)
         self.batch_progress.setValue(done)
+        self.batch_progress.setFormat(f"Overall: %v/%m | Remaining: {max(0, total - done)}")
         elapsed = max(0.0, time.monotonic() - self.batch_started_at)
         eta = 0.0 if done <= 0 else elapsed / done * max(0, total - done)
         self.batch_eta_label.setText(f"Elapsed: {self._fmt_seconds(elapsed)} | ETA: {self._fmt_seconds(eta)}")
@@ -444,7 +475,12 @@ class MainWindow(QMainWindow):
     def on_batch_finished(self) -> None:
         self.video_progress.setRange(0, 100)
         self.video_progress.setValue(0)
-        self.log_view.append("Batch render complete.")
+        self.current_file_label.setText("Current: --")
+        self.batch_progress.setFormat("Overall: %v/%m | Remaining: 0")
+        self._set_render_controls_enabled(True)
+        self._update_render_button_idle("Render Complete")
+        QTimer.singleShot(2500, lambda: self._update_render_button_idle() if self.batch_thread is None else None)
+        self.log_view.append("Render complete.")
         self.batch_thread = None
         self.batch_worker = None
 
@@ -673,21 +709,3 @@ class MainWindow(QMainWindow):
             if self.project.video_path:
                 self._set_player_source(self.project.video_path)
             self._refresh_all()
-
-    def export_video(self) -> None:
-        if not self.project.video_path:
-            QMessageBox.warning(self, "Missing video", "Open a source video first.")
-            return
-        input_path = Path(self.project.video_path)
-        output_dir = input_path.parent / "output"
-        path = unique_output_path(input_path, output_dir)
-        self.log_view.clear()
-        self.log_view.append(f"Exporting to: {path}")
-        try:
-            command = render_project(self.project, str(path), self.log_view.append)
-            self.last_output_dir = path.parent
-            self.log_view.append(command.shell_string())
-            QMessageBox.information(self, "Export complete", str(path))
-        except Exception as exc:  # noqa: BLE001
-            LOGGER.exception("Export failed")
-            QMessageBox.critical(self, "Export failed", str(exc))

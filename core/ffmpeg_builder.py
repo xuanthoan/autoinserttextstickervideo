@@ -9,7 +9,7 @@ from core.motion_engine import alpha_expr, scale_expr, x_expr, y_expr
 from core.project_model import Project
 from core.sticker_layer import StickerLayer
 from core.text_layer import TextLayer
-from core.text_template_engine import TextTemplateEngine
+from core.text_template_engine import TextLayout, TextTemplateEngine
 from utils.ffmpeg_helper import ffmpeg_path
 from utils.paths import resource_path
 
@@ -31,12 +31,7 @@ def _asset_margin(layout) -> int:  # type: ignore[no-untyped-def]
     return max(4, layout.stroke_width * 2 + layout.shadow_blur)
 
 
-def _text_asset_filter(layer: TextLayer, source: str, input_index: int, text_index: int, project: Project, text_asset_dir: Path) -> tuple[list[str], str]:
-    engine = TextTemplateEngine.load(resource_path("templates/text_templates.json"))
-    template = engine.get(layer.template_id)
-    layout = engine.layout(layer, project.width, project.height, template)
-    layer.color = template.text_color
-    layer.box_color = template.background_color
+def _text_asset_filter(layer: TextLayer, layout: TextLayout, source: str, input_index: int, text_index: int) -> tuple[list[str], str]:
     margin = _asset_margin(layout)
     alpha = alpha_expr(layer.start_time, layer.motion_duration, layer.opacity, layer.motion_preset, layer.easing)
     scale = scale_expr(layer.start_time, layer.motion_duration, 1.0, layer.motion_preset, layer.easing)
@@ -84,10 +79,15 @@ def build_ffmpeg_command(project: Project, output_path: str, require_binaries: b
         "-i",
         project.video_path,
     ]
+    engine = TextTemplateEngine.load(resource_path("templates/text_templates.json"))
+    text_layouts: dict[str, TextLayout] = {}
     text_input_indexes: list[int] = []
     for idx, layer in enumerate(project.text_layers, start=1):
-        engine = TextTemplateEngine.load(resource_path("templates/text_templates.json"))
-        layout = engine.layout(layer, project.width, project.height, engine.get(layer.template_id))
+        template = engine.get(layer.template_id)
+        layout = engine.layout(layer, project.width, project.height, template)
+        layer.color = template.text_color
+        layer.box_color = template.background_color
+        text_layouts[layer.layer_id] = layout
         asset_path = text_dir / f"text_layer_{idx}_{layer.layer_id}.png"
         from core.text_rasterizer import render_text_layer_image
 
@@ -102,7 +102,7 @@ def build_ffmpeg_command(project: Project, output_path: str, require_binaries: b
     filters = ["[0:v]setpts=PTS-STARTPTS[base]"]
     current = "base"
     for idx, layer in enumerate(project.text_layers, start=1):
-        parts, current = _text_asset_filter(layer, current, text_input_indexes[idx - 1], idx, project, text_dir)
+        parts, current = _text_asset_filter(layer, text_layouts[layer.layer_id], current, text_input_indexes[idx - 1], idx)
         filters.extend(parts)
     sticker_number = 1
     sticker_input_iter = iter(sticker_input_indexes)

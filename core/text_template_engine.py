@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+import importlib.util
 import json
 import random
 import re
@@ -151,12 +152,33 @@ def spacing(font_size: int, template: TextTemplate) -> tuple[int, int, int, int,
     )
 
 
-def _measure(text: str, font_size: int) -> int:
+def _qt_metrics(template: TextTemplate, font_size: int):  # type: ignore[no-untyped-def]
+    if importlib.util.find_spec("PySide6") is None:
+        return None
+    from PySide6.QtGui import QFont, QFontMetricsF
+
+    font = QFont(template.font_family, font_size)
+    font.setWeight(QFont.Weight.ExtraBold if template.font_weight >= 800 else QFont.Weight.Bold)
+    return QFontMetricsF(font)
+
+
+def _measure(text: str, font_size: int, template: TextTemplate | None = None) -> int:
+    if template is not None:
+        metrics = _qt_metrics(template, font_size)
+        if metrics is not None:
+            return max(1, round(metrics.horizontalAdvance(text)))
     wide = sum(1 for char in text if ord(char) > 127)
     return max(1, round((len(text) + wide * 0.25) * font_size * 0.58))
 
 
-def _wrap(text: str, font_size: int, limit: int) -> list[str]:
+def _line_height(font_size: int, template: TextTemplate) -> int:
+    metrics = _qt_metrics(template, font_size)
+    if metrics is not None:
+        return max(1, round(metrics.lineSpacing()))
+    return round(font_size * 1.05)
+
+
+def _wrap(text: str, font_size: int, limit: int, template: TextTemplate | None = None) -> list[str]:
     result: list[str] = []
     for raw_line in text.splitlines() or [text]:
         words = re.findall(r"\S+", raw_line)
@@ -166,7 +188,7 @@ def _wrap(text: str, font_size: int, limit: int) -> list[str]:
         line = words[0]
         for word in words[1:]:
             test = f"{line} {word}"
-            if _measure(test, font_size) <= limit:
+            if _measure(test, font_size, template) <= limit:
                 line = test
             else:
                 result.append(line)
@@ -176,7 +198,7 @@ def _wrap(text: str, font_size: int, limit: int) -> list[str]:
         prev = result[-2].split()
         moved = prev.pop()
         test_last = f"{moved} {result[-1]}"
-        if prev and _measure(test_last, font_size) <= limit:
+        if prev and _measure(test_last, font_size, template) <= limit:
             result[-2] = " ".join(prev)
             result[-1] = test_last
     return result
@@ -292,9 +314,9 @@ class TextTemplateEngine:
             hpad, vpad, radius, line_gap, shadow, stroke_width = spacing(font_size, item)
             hpad = max(hpad, scaled_box_padding)
             vpad = max(vpad, round(scaled_box_padding * 0.56))
-            lines = _wrap(text, font_size, max(MIN_FONT_SIZE, max_width - hpad * 2))
-            text_width = max((_measure(line, font_size) for line in lines), default=1)
-            line_height = round(font_size * 1.05)
+            lines = _wrap(text, font_size, max(MIN_FONT_SIZE, max_width - hpad * 2), item)
+            text_width = max((_measure(line, font_size, item) for line in lines), default=1)
+            line_height = _line_height(font_size, item)
             text_height = len(lines) * line_height + max(0, len(lines) - 1) * line_gap
             box_width = text_width + hpad * 2
             if box_width <= max_width or font_size <= min_font_size:

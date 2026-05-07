@@ -5,7 +5,7 @@ A lightweight Python 3.11+ desktop app for TikTok/Reels/Shorts mass-production o
 ## Features
 
 - Single-video, multi-video, folder, and drag/drop import for `.mp4`, `.mov`, `.avi`, and `.mkv`.
-- Sequential batch queue with reorder/remove/clear, cancel, retry failed item once, skip failed item, per-video progress, overall progress, elapsed time, and ETA.
+- One unified `Render Video (N)` workflow for one or many queued videos, with reorder/remove/clear, cancel, retry failed item once, skip failed item, current filename, per-video progress, overall progress, remaining count, elapsed time, and ETA.
 - Template-driven workflow with exactly seven built-in caption templates and no free text/background color pickers during normal editing.
 - Template panel with preview swatch, name, enable/disable toggle, duplicate, reset, and drag reorder.
 - Realtime lightweight preview using `QGraphicsView`/`QGraphicsScene`, draggable overlays, selection, center snapping guides, and motion simulation.
@@ -23,7 +23,7 @@ A lightweight Python 3.11+ desktop app for TikTok/Reels/Shorts mass-production o
 6. Pastel Pink — `#F0537A` on `#FFD7DF`
 7. Green White — `#FFFFFF` on `#8BC34A`
 
-Template #1 is assigned automatically when a new text layer is created. If one template is enabled, all batch videos use it. If multiple templates are enabled, the batch renderer randomizes per video and avoids repeating the same template consecutively when possible.
+Template #1 is assigned automatically when a new text layer is created. If one template is enabled, all queued videos use it. If multiple templates are enabled, the unified renderer randomizes per video and avoids repeating the same template consecutively when possible.
 
 ## Social caption layout rules
 

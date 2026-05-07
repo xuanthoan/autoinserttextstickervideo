@@ -4,10 +4,11 @@ from pathlib import Path
 from typing import Callable
 
 from PySide6.QtCore import QRectF, Qt, Signal
-from PySide6.QtGui import QBrush, QColor, QFont, QFontMetricsF, QImage, QPainter, QPainterPath, QPen, QPixmap
+from PySide6.QtGui import QBrush, QColor, QFont, QImage, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import QGraphicsItem, QGraphicsPixmapItem, QGraphicsRectItem, QGraphicsScene, QGraphicsTextItem, QGraphicsView, QStyleOptionGraphicsItem, QWidget
 
 from core.motion_engine import state_at
+from core.text_draw_plan import build_text_draw_plan
 from core.project_model import Project
 from core.sticker_layer import StickerLayer
 from core.text_layer import TextLayer
@@ -109,13 +110,10 @@ class LayerTextItem(DraggableOverlayMixin, QGraphicsTextItem):
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(QBrush(_preview_color(self.layout_data.template.background_color, "black")))
             painter.drawRoundedRect(self.boundingRect(), self.layout_data.radius, self.layout_data.radius)
-        metrics = QFontMetricsF(self.font())
-        baseline = self.layout_data.vpad + metrics.ascent() if self.layer.box_enabled else metrics.ascent()
-        for line in self.layout_data.lines:
-            line_width = metrics.horizontalAdvance(line)
-            x = (self.layout_data.box_width - line_width) / 2 if self.layer.box_enabled else 0
+        plan = build_text_draw_plan(self.layer, self.layout_data, self.font())
+        for draw_line in plan.lines:
             path = QPainterPath()
-            path.addText(x, baseline, self.font(), line)
+            path.addText(draw_line.x, draw_line.baseline, self.font(), draw_line.text)
             if self.layer.stroke_enabled and self.layout_data.stroke_width > 0:
                 painter.setPen(QPen(_preview_color(self.layer.stroke_color, "black"), self.layout_data.stroke_width * 2, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
                 painter.setBrush(Qt.BrushStyle.NoBrush)
@@ -123,7 +121,6 @@ class LayerTextItem(DraggableOverlayMixin, QGraphicsTextItem):
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(QBrush(_preview_color(self.layout_data.template.text_color, "white")))
             painter.drawPath(path)
-            baseline += metrics.height() + self.layout_data.line_spacing
         painter.restore()
 
 

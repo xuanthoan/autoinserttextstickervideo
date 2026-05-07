@@ -3,9 +3,10 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QBrush, QColor, QFont, QFontMetricsF, QImage, QPainter, QPainterPath, QPen
+from PySide6.QtGui import QBrush, QColor, QFont, QImage, QPainter, QPainterPath, QPen
 
 from core.text_layer import TextLayer
+from core.text_draw_plan import build_text_draw_plan
 from core.text_template_engine import TextLayout
 
 
@@ -42,13 +43,10 @@ def render_text_layer_image(layer: TextLayer, layout: TextLayout, path: str | Pa
         painter.drawRoundedRect(margin, margin, layout.box_width, layout.box_height, layout.radius, layout.radius)
 
     painter.setFont(font)
-    metrics = QFontMetricsF(font)
-    baseline = margin + (layout.vpad + metrics.ascent() if layer.box_enabled else metrics.ascent())
-    for line in layout.lines:
-        line_width = metrics.horizontalAdvance(line)
-        x = margin + ((layout.box_width - line_width) / 2 if layer.box_enabled else 0)
+    plan = build_text_draw_plan(layer, layout, font, origin_x=margin, origin_y=margin)
+    for draw_line in plan.lines:
         path_item = QPainterPath()
-        path_item.addText(x, baseline, font, line)
+        path_item.addText(draw_line.x, draw_line.baseline, font, draw_line.text)
         if layer.stroke_enabled and layout.stroke_width > 0:
             painter.setPen(QPen(_color(layer.stroke_color, "black"), layout.stroke_width * 2, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
             painter.setBrush(Qt.BrushStyle.NoBrush)
@@ -56,7 +54,6 @@ def render_text_layer_image(layer: TextLayer, layout: TextLayout, path: str | Pa
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QBrush(_color(layout.template.text_color, "white")))
         painter.drawPath(path_item)
-        baseline += metrics.height() + layout.line_spacing
     painter.end()
     image.save(str(target), "PNG")
     return target
