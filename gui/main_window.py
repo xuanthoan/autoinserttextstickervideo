@@ -39,9 +39,10 @@ from gui.batch_worker import BatchRenderWorker
 from gui.preview_canvas import PreviewCanvas
 from gui.timeline_panel import TimelinePanel
 from utils.ffmpeg_helper import probe_video
+from utils.paths import resource_path
 
 LOGGER = logging.getLogger(__name__)
-TEMPLATE_PATH = Path("templates/text_templates.json")
+TEMPLATE_PATH = resource_path("templates/text_templates.json")
 MOTION_PRESETS = ["none", "fade_in", "fade_out", "slide_left", "slide_right", "slide_up", "slide_down", "zoom_in", "zoom_out", "bounce", "pop"]
 EASINGS = ["linear", "ease-in", "ease-out", "ease-in-out"]
 
@@ -389,6 +390,7 @@ class MainWindow(QMainWindow):
         self.batch_worker.moveToThread(self.batch_thread)
         self.batch_thread.started.connect(self.batch_worker.run)
         self.batch_worker.logLine.connect(self.log_view.append)
+        self.batch_worker.videoProgress.connect(self.on_batch_video_progress)
         self.batch_worker.videoStarted.connect(self.on_batch_video_started)
         self.batch_worker.videoFinished.connect(self.on_batch_video_finished)
         self.batch_worker.videoFailed.connect(self.on_batch_video_failed)
@@ -402,11 +404,15 @@ class MainWindow(QMainWindow):
     def cancel_batch(self) -> None:
         if self.batch_worker is not None:
             self.batch_worker.cancel()
-            self.log_view.append("Cancel requested; current render will finish before stopping.")
+            self.log_view.append("Cancel requested; stopping the active FFmpeg process...")
 
     def on_batch_video_started(self, index: int, total: int, path: str) -> None:
         self.video_progress.setRange(0, 0)
         self.log_view.append(f"Starting {index}/{total}: {Path(path).name}")
+
+    def on_batch_video_progress(self, percent: float) -> None:
+        self.video_progress.setRange(0, 100)
+        self.video_progress.setValue(round(percent))
 
     def on_batch_video_finished(self, index: int, total: int, output_path: str) -> None:
         self.video_progress.setRange(0, 100)

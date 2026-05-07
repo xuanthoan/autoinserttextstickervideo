@@ -51,6 +51,8 @@ Install FFmpeg and FFprobe on `PATH`, place binaries in `bin/`, or put `ffmpeg.e
 python main.py
 ```
 
+On Windows you can also double-click `main.py`; the app now switches to its own folder on startup so bundled `templates/`, `bin/ffmpeg.exe`, `bin/ffprobe.exe`, and `logs/` are found even when Explorer launches Python from another working directory.
+
 ## Build
 
 ```bash

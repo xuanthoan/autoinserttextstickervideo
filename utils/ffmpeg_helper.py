@@ -6,6 +6,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from utils.paths import app_root
+
 
 def _binary_names(name: str) -> list[str]:
     """Return executable names to try on every platform.
@@ -26,7 +28,7 @@ def _candidate_roots() -> list[Path]:
         meipass = getattr(sys, "_MEIPASS", None)
         if meipass:
             roots.append(Path(meipass).resolve())
-    roots.append(Path(__file__).resolve().parents[1])
+    roots.append(app_root())
     roots.append(Path.cwd().resolve())
 
     unique: list[Path] = []
@@ -61,7 +63,7 @@ def bundled_binary(name: str, require: bool = False) -> str:
             f"Cannot find {name}. Put {name}.exe next to main.py, in bin/, or on PATH.\nSearched:\n{searched}"
         )
 
-    fallback = Path(__file__).resolve().parents[1] / "bin" / _binary_names(name)[0]
+    fallback = app_root() / "bin" / _binary_names(name)[0]
     return str(fallback)
 
 

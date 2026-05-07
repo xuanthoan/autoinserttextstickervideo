@@ -13,6 +13,7 @@ from utils.ffmpeg_helper import probe_video
 
 class BatchRenderWorker(QObject):
     videoStarted = Signal(int, int, str)
+    videoProgress = Signal(float)
     videoFinished = Signal(int, int, str)
     videoFailed = Signal(int, int, str, str)
     overallProgress = Signal(int, int)
@@ -23,7 +24,7 @@ class BatchRenderWorker(QObject):
         super().__init__()
         self.base_project = deepcopy(base_project)
         self.video_paths = list(video_paths)
-        self.template_engine = template_engine
+        self.template_engine = deepcopy(template_engine)
         self.cancel_requested = False
 
     def cancel(self) -> None:
@@ -40,8 +41,12 @@ class BatchRenderWorker(QObject):
                 self.logLine.emit("Batch render cancelled.")
                 break
             self.videoStarted.emit(index, total, video_path)
+            self.videoProgress.emit(0.0)
             last_error = ""
             for attempt in range(1, 3):
+                if self.cancel_requested:
+                    last_error = "Render cancelled"
+                    break
                 try:
                     project = deepcopy(self.base_project)
                     metadata = probe_video(video_path)
@@ -57,15 +62,26 @@ class BatchRenderWorker(QObject):
                     output_dir.mkdir(exist_ok=True)
                     output_path = output_dir / f"{input_path.stem}_output.mp4"
                     self.logLine.emit(f"[{index}/{total}] attempt {attempt}: {input_path.name} → {output_path.name} ({template.name})")
-                    render_project(project, str(output_path), self.logLine.emit)
+                    render_project(
+                        project,
+                        str(output_path),
+                        self.logLine.emit,
+                        self.videoProgress.emit,
+                        lambda: self.cancel_requested,
+                    )
                     self.videoFinished.emit(index, total, str(output_path))
                     last_error = ""
                     break
                 except Exception as exc:  # noqa: BLE001
                     last_error = str(exc)
                     self.logLine.emit(f"Attempt {attempt} failed for {video_path}: {exc}")
+                    if self.cancel_requested:
+                        break
             if last_error:
                 self.videoFailed.emit(index, total, video_path, last_error)
+                if self.cancel_requested:
+                    self.logLine.emit(f"Stopped current item: {video_path}")
+                    break
                 self.logLine.emit(f"Skipped failed item after retry: {video_path}")
             self.overallProgress.emit(index, total)
         self.finished.emit()

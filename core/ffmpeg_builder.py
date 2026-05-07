@@ -10,6 +10,7 @@ from core.sticker_layer import StickerLayer
 from core.text_layer import TextLayer
 from core.text_template_engine import TextTemplateEngine
 from utils.ffmpeg_helper import ffmpeg_path
+from utils.paths import resource_path
 
 
 @dataclass
@@ -47,7 +48,7 @@ def _font(layer: TextLayer) -> str:
 
 
 def _text_filter(layer: TextLayer, source: str, index: int, project: Project) -> tuple[list[str], str]:
-    engine = TextTemplateEngine.load("templates/text_templates.json")
+    engine = TextTemplateEngine.load(resource_path("templates/text_templates.json"))
     template = engine.get(layer.template_id)
     layout = engine.layout(layer, project.width, project.height, template)
     layer.color = template.text_color
@@ -87,7 +88,18 @@ def build_ffmpeg_command(project: Project, output_path: str, require_binaries: b
     del text_asset_dir
     if not project.video_path:
         raise ValueError("Project has no input video")
-    args = [ffmpeg_path(require=require_binaries), "-y", "-fflags", "+genpts", "-i", project.video_path]
+    args = [
+        ffmpeg_path(require=require_binaries),
+        "-hide_banner",
+        "-nostdin",
+        "-y",
+        "-stats_period",
+        "0.5",
+        "-fflags",
+        "+genpts",
+        "-i",
+        project.video_path,
+    ]
     for layer in project.sticker_layers:
         if layer.file_path:
             args.extend(["-loop", "1", "-framerate", "30", "-i", layer.file_path])
@@ -106,6 +118,7 @@ def build_ffmpeg_command(project: Project, output_path: str, require_binaries: b
     filters.append(f"[{current}]format=yuv420p[final]")
     args.extend([
         "-filter_complex", ";".join(filters),
+        "-progress", "pipe:1", "-nostats",
         "-map", "[final]", "-map", "0:a?",
         "-c:v", "libx264", "-crf", "18", "-preset", "veryfast",
         "-c:a", "aac", "-b:a", "192k", "-vsync", "2", "-movflags", "+faststart",
