@@ -10,7 +10,7 @@ A lightweight Python 3.11+ desktop app for TikTok/Reels/Shorts mass-production o
 - Template panel with preview swatch, name, enable/disable toggle, duplicate, reset, and drag reorder.
 - Realtime lightweight preview using `QGraphicsView`/`QGraphicsScene`, draggable overlays, selection, center snapping guides, and motion simulation.
 - Timeline layer controls for start/end/duration trimming.
-- Text and sticker layers with opacity, rotation, timeline, and motion presets.
+- Inline Edit Panel overlay workflow: type text to auto-create/hide captions, select a sticker file to auto-create/update sticker overlays, then adjust opacity, position, rotation, timeline, and motion presets.
 - FFmpeg export uses `-fflags +genpts`, `setpts=PTS-STARTPTS`, `overlay=shortest=1`, H.264 `-crf 18`, `-preset veryfast`, and AAC audio.
 
 ## Built-in caption templates

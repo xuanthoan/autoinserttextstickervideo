@@ -128,23 +128,24 @@ class LayerStickerItem(DraggableOverlayMixin, QGraphicsPixmapItem):
     def __init__(
         self,
         layer: StickerLayer,
+        pixmap: QPixmap,
         on_move: Callable[[str, float, float], None],
         on_drag: Callable[[QGraphicsItem, float, float], tuple[float, float, bool, bool]],
         on_release: Callable[[], None],
         current_time: float,
     ) -> None:
-        pixmap = QPixmap(layer.file_path) if layer.file_path and Path(layer.file_path).exists() else QPixmap(160, 100)
-        if pixmap.isNull():
-            pixmap = QPixmap(160, 100)
-        if layer.file_path == "" or (pixmap.size().width() == 160 and pixmap.size().height() == 100):
-            pixmap.fill(QColor("#ffcc00"))
+        source_pixmap = QPixmap(pixmap)
+        if source_pixmap.isNull():
+            source_pixmap = QPixmap(160, 100)
+            source_pixmap.fill(QColor("#ffcc00"))
         motion = state_at(layer.motion_preset, current_time, layer.start_time, layer.motion_duration, layer.x, layer.y, layer.opacity, layer.easing)
-        super().__init__(pixmap)
+        super().__init__(source_pixmap)
         self.layer = layer
         self.on_move = on_move
         self.on_drag = on_drag
         self.on_release = on_release
         self.setOpacity(motion.alpha)
+        self.setTransformationMode(Qt.TransformationMode.SmoothTransformation)
         self.setScale(layer.scale * motion.scale)
         self.setRotation(layer.rotation)
         self.setFlag(QGraphicsPixmapItem.GraphicsItemFlag.ItemIsMovable)
@@ -170,6 +171,7 @@ class PreviewCanvas(QGraphicsView):
         self.video_backdrop: QGraphicsRectItem | None = None
         self.safe_items: list[QGraphicsRectItem] = []
         self.overlay_items: list[LayerTextItem | LayerStickerItem] = []
+        self.sticker_pixmap_cache: dict[str, QPixmap] = {}
         self.template_engine = TextTemplateEngine.load(resource_path("templates/text_templates.json"))
         self.preview_pixmap = QPixmap()
         self.center_v = self.scene.addLine(0, 0, 0, 0, QPen(GUIDE_COLOR, 1.5, Qt.PenStyle.SolidLine))
@@ -258,9 +260,22 @@ class PreviewCanvas(QGraphicsView):
                 self.scene.addItem(item)
         for layer in self.project.sticker_layers:
             if layer.start_time <= self.current_time <= layer.end_time:
-                item = LayerStickerItem(layer, self._emit_move, self._snap_clamp_drag, self._hide_guides, self.current_time)
+                item = LayerStickerItem(layer, self._immutable_sticker_pixmap(layer), self._emit_move, self._snap_clamp_drag, self._hide_guides, self.current_time)
                 self.overlay_items.append(item)
                 self.scene.addItem(item)
+
+    def _immutable_sticker_pixmap(self, layer: StickerLayer) -> QPixmap:
+        key = str(Path(layer.file_path).resolve()) if layer.file_path and Path(layer.file_path).exists() else ""
+        if key and key not in self.sticker_pixmap_cache:
+            pixmap = QPixmap(key)
+            if pixmap.isNull():
+                pixmap = QPixmap()
+            self.sticker_pixmap_cache[key] = pixmap
+        if key and not self.sticker_pixmap_cache[key].isNull():
+            return QPixmap(self.sticker_pixmap_cache[key])
+        placeholder = QPixmap(160, 100)
+        placeholder.fill(QColor("#ffcc00"))
+        return placeholder
 
     def _snap_clamp_drag(self, item: QGraphicsItem, x: float, y: float) -> tuple[float, float, bool, bool]:
         if self.project is None:

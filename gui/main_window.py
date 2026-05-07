@@ -79,11 +79,8 @@ class MainWindow(QMainWindow):
             ("Open Video", self.open_video),
             ("Add Videos", self.add_videos_to_queue),
             ("Import Folder", self.import_video_folder),
-            ("Play", self.play_video),
-            ("Pause", self.pause_video),
+            ("Preview", self.play_video),
             ("Stop", self.stop_video),
-            ("Add Text", self.add_text),
-            ("Add Sticker", self.add_sticker),
             ("Save Project", self.save_project),
             ("Load Project", self.load_project),
             ("Render Video (0)", self.render_queue),
@@ -105,6 +102,7 @@ class MainWindow(QMainWindow):
         self.form = QFormLayout(self.inspector)
         self.layer_label = QLabel("No layer selected")
         self.text_input = QLineEdit()
+        self.text_input.setPlaceholderText("Type text to create an overlay")
         self.font_path = QLineEdit()
         self.font_size = QSpinBox()
         self.font_size.setRange(1, 400)
@@ -132,27 +130,37 @@ class MainWindow(QMainWindow):
         self.easing = QComboBox()
         self.easing.addItems(EASINGS)
         self.template_combo = QComboBox()
+        self.sticker_file = QLineEdit()
+        self.sticker_file.setReadOnly(True)
+        self.sticker_file.setPlaceholderText("No sticker selected")
+        self.select_sticker_button = QPushButton("Select Sticker")
+        self.clear_sticker_button = QPushButton("Clear Sticker")
         self.save_template_button = QPushButton("Save Text Template")
         for spin in (self.x_value, self.y_value):
             spin.setRange(-10000.0, 10000.0)
         for label, widget in [
             ("Layer", self.layer_label),
-            ("Text", self.text_input),
+            ("TEXT", QLabel("")),
+            ("Text Content", self.text_input),
+            ("Text template", self.template_combo),
             ("Font path", self.font_path),
             ("Font size", self.font_size),
             ("Stroke", self.stroke_enabled),
             ("Stroke width", self.stroke_width),
             ("Background", self.box_enabled),
             ("Min background padding", self.box_padding),
+            ("STICKER", QLabel("")),
+            ("Sticker File", self.sticker_file),
+            ("", self.select_sticker_button),
+            ("", self.clear_sticker_button),
+            ("Sticker scale", self.scale_value),
             ("Opacity", self.opacity),
             ("X", self.x_value),
             ("Y", self.y_value),
-            ("Sticker scale", self.scale_value),
             ("Rotation", self.rotation),
             ("Motion", self.motion),
             ("Motion duration", self.motion_duration),
             ("Easing", self.easing),
-            ("Text template", self.template_combo),
             ("", self.save_template_button),
         ]:
             self.form.addRow(label, widget)
@@ -282,6 +290,7 @@ class MainWindow(QMainWindow):
         self.preview_timer.timeout.connect(self.advance_preview_time)
         self.timeline.layerTimingChanged.connect(self.change_timing)
         self.timeline.layerSelected.connect(self.select_layer)
+        self.text_input.textEdited.connect(self.on_text_content_edited)
         self.text_input.editingFinished.connect(self.apply_inspector)
         self.font_path.editingFinished.connect(self.apply_inspector)
         self.font_size.valueChanged.connect(self.apply_inspector)
@@ -298,6 +307,8 @@ class MainWindow(QMainWindow):
         self.motion_duration.valueChanged.connect(self.apply_inspector)
         self.easing.currentTextChanged.connect(self.apply_inspector)
         self.template_combo.currentTextChanged.connect(self.apply_template)
+        self.select_sticker_button.clicked.connect(self.select_sticker_inline)
+        self.clear_sticker_button.clicked.connect(self.clear_sticker_inline)
         self.save_template_button.clicked.connect(self.save_current_template)
 
     def _refresh_all(self) -> None:
@@ -310,6 +321,68 @@ class MainWindow(QMainWindow):
             if layer.layer_id == layer_id:
                 return layer
         return None
+
+    def _first_text_layer(self) -> TextLayer | None:
+        return self.project.text_layers[0] if self.project.text_layers else None
+
+    def _selected_or_first_sticker_layer(self) -> StickerLayer | None:
+        layer = self._layer_by_id(self.selected_layer_id)
+        if isinstance(layer, StickerLayer):
+            return layer
+        return self.project.sticker_layers[0] if self.project.sticker_layers else None
+
+    def _create_text_layer(self, text: str) -> TextLayer:
+        layer = self.project.add_text_layer(TextLayer(text=text, x=self.project.width / 2 - 150, y=self.project.height / 2, stroke_enabled=False, stroke_width=0))
+        self.template_engine.apply_to_layer(layer, self.template_engine.by_id_or_name("orange-white"), permanent=False)
+        self.selected_layer_id = layer.layer_id
+        return layer
+
+    def _ensure_text_layer(self, text: str) -> TextLayer:
+        layer = self._first_text_layer()
+        if layer is None:
+            layer = self._create_text_layer(text)
+        else:
+            layer.text = text
+            if layer.end_time <= layer.start_time:
+                layer.end_time = max(5.0, min(self.project.duration, 5.0) if self.project.duration else 5.0)
+            self.selected_layer_id = layer.layer_id
+        return layer
+
+    def on_text_content_edited(self, text: str) -> None:
+        value = text.strip()
+        if value:
+            layer = self._ensure_text_layer(text)
+            self.selected_layer_id = layer.layer_id
+        else:
+            layer = self._first_text_layer()
+            if layer is not None:
+                self.project.remove_layer(layer.layer_id)
+                if self.selected_layer_id == layer.layer_id:
+                    self.selected_layer_id = None
+        self._refresh_all()
+
+    def select_sticker_inline(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(self, "Choose sticker", "", "Images (*.png *.jpg *.jpeg *.webp)")
+        if not path:
+            return
+        layer = self._selected_or_first_sticker_layer()
+        if layer is None:
+            layer = self.project.add_sticker_layer(StickerLayer(file_path=path, x=self.project.width / 2, y=self.project.height / 2))
+        else:
+            layer.file_path = path
+            if layer.end_time <= layer.start_time:
+                layer.end_time = max(5.0, min(self.project.duration, 5.0) if self.project.duration else 5.0)
+        self.selected_layer_id = layer.layer_id
+        self._refresh_all()
+
+    def clear_sticker_inline(self) -> None:
+        layer = self._selected_or_first_sticker_layer()
+        if layer is None:
+            return
+        self.project.remove_layer(layer.layer_id)
+        if self.selected_layer_id == layer.layer_id:
+            self.selected_layer_id = None
+        self._refresh_all()
 
 
     def import_video_folder(self) -> None:
@@ -390,8 +463,8 @@ class MainWindow(QMainWindow):
         if not self.template_engine.enabled_templates():
             QMessageBox.warning(self, "No templates enabled", "Enable at least one text template before batch rendering.")
             return
-        if not self.project.text_layers:
-            self.add_text()
+        if not self.project.text_layers and self.text_input.text().strip():
+            self._ensure_text_layer(self.text_input.text())
         self.log_view.clear()
         self._set_render_controls_enabled(False)
         self.video_progress.setRange(0, 0)
@@ -500,20 +573,6 @@ class MainWindow(QMainWindow):
         except Exception as exc:  # noqa: BLE001
             QMessageBox.critical(self, "FFprobe error", str(exc))
 
-    def add_text(self) -> None:
-        layer = self.project.add_text_layer(TextLayer(x=self.project.width / 2 - 150, y=self.project.height / 2, stroke_enabled=False, stroke_width=0))
-        self.template_engine.apply_to_layer(layer, self.template_engine.by_id_or_name("orange-white"), permanent=False)
-        self.selected_layer_id = layer.layer_id
-        self._refresh_all()
-
-    def add_sticker(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, "Choose sticker", "", "Images (*.png *.jpg *.jpeg *.webp)")
-        if not path:
-            return
-        layer = self.project.add_sticker_layer(StickerLayer(file_path=path, x=self.project.width / 2, y=self.project.height / 2))
-        self.selected_layer_id = layer.layer_id
-        self._refresh_all()
-
     def handle_files_dropped(self, paths: list[str]) -> None:
         for path in paths:
             suffix = Path(path).suffix.lower()
@@ -529,7 +588,12 @@ class MainWindow(QMainWindow):
                 except Exception as exc:  # noqa: BLE001
                     self.log_view.append(f"Probe failed: {exc}")
             elif suffix in {".png", ".jpg", ".jpeg", ".webp"}:
-                self.project.add_sticker_layer(StickerLayer(file_path=path))
+                layer = self._selected_or_first_sticker_layer()
+                if layer is None:
+                    layer = self.project.add_sticker_layer(StickerLayer(file_path=path, x=self.project.width / 2, y=self.project.height / 2))
+                else:
+                    layer.file_path = path
+                self.selected_layer_id = layer.layer_id
         self._refresh_all()
 
     def select_layer(self, layer_id: str) -> None:
@@ -555,10 +619,27 @@ class MainWindow(QMainWindow):
 
     def populate_inspector(self) -> None:
         layer = self._layer_by_id(self.selected_layer_id)
-        enabled = layer is not None
+        text_layer = layer if isinstance(layer, TextLayer) else self._first_text_layer()
+        sticker_layer = layer if isinstance(layer, StickerLayer) else self._selected_or_first_sticker_layer()
+        editable_layer = layer is not None
         for widget in self.inspector.findChildren(QWidget):
             widget.blockSignals(True)
-            widget.setEnabled(enabled)
+            widget.setEnabled(editable_layer)
+        self.text_input.setEnabled(True)
+        self.template_combo.setEnabled(True)
+        self.select_sticker_button.setEnabled(True)
+        self.clear_sticker_button.setEnabled(sticker_layer is not None)
+        self.sticker_file.setEnabled(True)
+        self.sticker_file.setText(Path(sticker_layer.file_path).name if sticker_layer and sticker_layer.file_path else "")
+        self.text_input.setText(text_layer.text if text_layer is not None else "")
+        if text_layer is not None:
+            self.font_path.setText(text_layer.font_path)
+            self.font_size.setValue(text_layer.font_size)
+            self.template_combo.setCurrentText(self.template_engine.by_id_or_name(text_layer.template_id).name)
+            self.stroke_enabled.setChecked(text_layer.stroke_enabled)
+            self.stroke_width.setValue(text_layer.stroke_width)
+            self.box_enabled.setChecked(text_layer.box_enabled)
+            self.box_padding.setValue(text_layer.box_padding)
         if layer is None:
             self.layer_label.setText("No layer selected")
         else:
@@ -570,27 +651,34 @@ class MainWindow(QMainWindow):
             self.motion.setCurrentText(layer.motion_preset)
             self.motion_duration.setValue(layer.motion_duration)
             self.easing.setCurrentText(layer.easing)
-            if isinstance(layer, TextLayer):
-                self.text_input.setText(layer.text)
-                self.font_path.setText(layer.font_path)
-                self.font_size.setValue(layer.font_size)
-                self.template_combo.setCurrentText(self.template_engine.by_id_or_name(layer.template_id).name)
-                self.stroke_enabled.setChecked(layer.stroke_enabled)
-                self.stroke_width.setValue(layer.stroke_width)
-                self.box_enabled.setChecked(layer.box_enabled)
-                self.box_padding.setValue(layer.box_padding)
-                self.scale_value.setValue(1.0)
             if isinstance(layer, StickerLayer):
-                self.text_input.setText(Path(layer.file_path).name)
-                self.font_path.clear()
                 self.scale_value.setValue(layer.scale)
+            else:
+                self.scale_value.setValue(1.0)
         for widget in self.inspector.findChildren(QWidget):
             widget.blockSignals(False)
-            widget.setEnabled(enabled)
+        for widget in (self.text_input, self.template_combo, self.select_sticker_button, self.sticker_file):
+            widget.setEnabled(True)
+        self.clear_sticker_button.setEnabled(sticker_layer is not None)
+        for widget in (self.font_path, self.font_size, self.stroke_enabled, self.stroke_width, self.box_enabled, self.box_padding, self.save_template_button):
+            widget.setEnabled(text_layer is not None)
+        for widget in (self.scale_value,):
+            widget.setEnabled(sticker_layer is not None)
 
     def apply_inspector(self) -> None:
         layer = self._layer_by_id(self.selected_layer_id)
+        text_layer = layer if isinstance(layer, TextLayer) else self._first_text_layer()
+        if text_layer is not None:
+            text_layer.text = self.text_input.text()
+            text_layer.font_path = self.font_path.text()
+            text_layer.font_size = self.font_size.value()
+            text_layer.stroke_enabled = self.stroke_enabled.isChecked()
+            text_layer.stroke_width = self.stroke_width.value() if text_layer.stroke_enabled else 0
+            text_layer.box_enabled = self.box_enabled.isChecked()
+            text_layer.box_padding = self.box_padding.value()
         if layer is None:
+            self.canvas.refresh_overlays()
+            self.timeline.refresh()
             return
         layer.x = self.x_value.value()
         layer.y = self.y_value.value()
@@ -599,14 +687,6 @@ class MainWindow(QMainWindow):
         layer.motion_preset = self.motion.currentText()
         layer.motion_duration = self.motion_duration.value()
         layer.easing = self.easing.currentText()
-        if isinstance(layer, TextLayer):
-            layer.text = self.text_input.text()
-            layer.font_path = self.font_path.text()
-            layer.font_size = self.font_size.value()
-            layer.stroke_enabled = self.stroke_enabled.isChecked()
-            layer.stroke_width = self.stroke_width.value() if layer.stroke_enabled else 0
-            layer.box_enabled = self.box_enabled.isChecked()
-            layer.box_padding = self.box_padding.value()
         if isinstance(layer, StickerLayer):
             layer.scale = self.scale_value.value()
         self.canvas.refresh_overlays()
@@ -650,11 +730,14 @@ class MainWindow(QMainWindow):
         self.refresh_template_panel()
 
     def apply_template(self, name: str) -> None:
+        if not name:
+            return
         layer = self._layer_by_id(self.selected_layer_id)
-        if not name or not isinstance(layer, TextLayer):
+        text_layer = layer if isinstance(layer, TextLayer) else self._first_text_layer()
+        if text_layer is None:
             return
         template = self.template_engine.by_id_or_name(name)
-        self.template_engine.apply_to_layer(layer, template, permanent=False)
+        self.template_engine.apply_to_layer(text_layer, template, permanent=False)
         self._refresh_all()
 
     def save_current_template(self) -> None:

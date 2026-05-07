@@ -52,7 +52,7 @@ def _sticker_filter(layer: StickerLayer, source: str, input_index: int, sticker_
     y = y_expr(layer.start_time, layer.motion_duration, layer.y, layer.motion_preset, layer.easing)
     scale = scale_expr(layer.start_time, layer.motion_duration, layer.scale, layer.motion_preset, layer.easing)
     prep = (
-        f"[{input_index}:v]loop=loop=-1:size=1:start=0,setpts=PTS-STARTPTS,format=rgba,"
+        f"[{input_index}:v]setpts=PTS-STARTPTS,format=rgba,"
         f"scale=w='iw*{scale}':h='ih*{scale}':eval=frame,"
         f"rotate={layer.rotation}*PI/180:c=none:ow=rotw(iw):oh=roth(ih),"
         f"colorchannelmixer=aa='{alpha}'[stk{sticker_index}]"
