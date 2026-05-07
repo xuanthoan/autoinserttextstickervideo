@@ -37,3 +37,16 @@ A PyInstaller spec is also provided:
 ```bash
 pyinstaller autoinserttextstickervideo.spec
 ```
+
+
+## Text template engine
+
+The reusable template engine in `core/text_template_engine.py` provides TikTok/Reels/Shorts-style rounded caption presets. It uses Montserrat ExtraBold by default with Poppins Bold fallback, center alignment, optional uppercase, safe-area clamping, max-width wrapping (`videoWidth * 0.78`), minimum font-size protection, and proportional spacing formulas:
+
+- `horizontalPadding = fontSize * 0.8`
+- `verticalPadding = fontSize * 0.45`
+- `borderRadius = fontSize * 0.35`
+- `lineSpacing = fontSize * 0.25`
+- `shadowBlur = fontSize * 0.15`
+
+Templates are stored in `templates/text_templates.json`, can be permanently saved from the GUI, and can be assigned for batch work with non-consecutive randomization when multiple templates are selected. During export, text layers are rendered as high-quality transparent rounded PNG assets and FFmpeg only overlays those assets, which avoids invalid `drawtext/geq` filter failures such as exit code `4294967274`.

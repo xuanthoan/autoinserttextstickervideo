@@ -13,6 +13,8 @@ class TextLayer:
     y: float = 100.0
     rotation: float = 0.0
     font_path: str = ""
+    font_family: str = "Montserrat ExtraBold"
+    font_weight: int = 800
     font_size: int = 48
     color: str = "white"
     stroke_color: str = "black"
@@ -21,6 +23,8 @@ class TextLayer:
     box_color: str = "black@0.5"
     box_padding: int = 10
     box_radius: int = 0
+    template_id: str = "orange-white"
+    auto_uppercase: bool = False
     opacity: float = 1.0
     motion_preset: str = "none"
     motion_duration: float = 0.5
@@ -37,10 +41,10 @@ class TextLayer:
         The inspector value acts as a minimum so existing projects keep their
         spacing, while larger text automatically gets a larger background.
         """
-        return max(self.box_padding, round(self.font_size * 0.28))
+        return max(self.box_padding, round(self.font_size * 0.8))
 
     def effective_box_radius(self) -> int:
         """Scale corner radius with font/background size unless overridden."""
         if self.box_radius > 0:
             return self.box_radius
-        return max(4, round(self.effective_box_padding() * 0.9))
+        return max(4, round(self.font_size * 0.35))

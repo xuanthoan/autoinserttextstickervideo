@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import json
 import logging
-from dataclasses import asdict
 from pathlib import Path
 
 from PySide6.QtCore import QUrl, Qt
@@ -31,6 +29,7 @@ from core.project_model import Project
 from core.renderer import render_project
 from core.sticker_layer import StickerLayer
 from core.text_layer import TextLayer
+from core.text_template_engine import TextTemplate, TextTemplateEngine
 from gui.preview_canvas import PreviewCanvas
 from gui.timeline_panel import TimelinePanel
 from utils.ffmpeg_helper import probe_video
@@ -58,6 +57,7 @@ class MainWindow(QMainWindow):
         self._build_toolbar()
         self._build_docks()
         self._connect_signals()
+        self.template_engine = TextTemplateEngine.load(TEMPLATE_PATH)
         self._load_templates()
         self._refresh_all()
 
@@ -282,6 +282,7 @@ class MainWindow(QMainWindow):
                 self.text_input.setText(layer.text)
                 self.font_path.setText(layer.font_path)
                 self.font_size.setValue(layer.font_size)
+                self.template_combo.setCurrentText(self.template_engine.by_id_or_name(layer.template_id).name)
                 self.stroke_color.setText(layer.stroke_color)
                 self.stroke_width.setValue(layer.stroke_width)
                 self.box_enabled.setChecked(layer.box_enabled)
@@ -387,20 +388,20 @@ class MainWindow(QMainWindow):
 
     def _load_templates(self) -> None:
         TEMPLATE_PATH.parent.mkdir(exist_ok=True)
-        if not TEMPLATE_PATH.exists():
-            TEMPLATE_PATH.write_text(json.dumps({"Headline": {"font_size": 72, "color": "white", "stroke_width": 4}}, indent=2), encoding="utf-8")
-        self.templates = json.loads(TEMPLATE_PATH.read_text(encoding="utf-8"))
+        self.template_engine = TextTemplateEngine.load(TEMPLATE_PATH)
+        self.canvas.template_engine = self.template_engine
+        self.template_combo.blockSignals(True)
         self.template_combo.clear()
         self.template_combo.addItem("")
-        self.template_combo.addItems(sorted(self.templates))
+        self.template_combo.addItems([template.name for template in self.template_engine.enabled_templates()])
+        self.template_combo.blockSignals(False)
 
     def apply_template(self, name: str) -> None:
         layer = self._layer_by_id(self.selected_layer_id)
         if not name or not isinstance(layer, TextLayer):
             return
-        for key, value in self.templates.get(name, {}).items():
-            if hasattr(layer, key):
-                setattr(layer, key, value)
+        template = self.template_engine.by_id_or_name(name)
+        self.template_engine.apply_to_layer(layer, template, permanent=False)
         self._refresh_all()
 
     def save_current_template(self) -> None:
@@ -410,11 +411,25 @@ class MainWindow(QMainWindow):
         name, ok = QInputDialog.getText(self, "Template name", "Name")
         if not ok or not name:
             return
-        data = asdict(layer)
-        for transient in ("text", "start_time", "end_time", "x", "y", "layer_id"):
-            data.pop(transient, None)
-        self.templates[name] = data
-        TEMPLATE_PATH.write_text(json.dumps(self.templates, indent=2), encoding="utf-8")
+        template_id = name.lower().replace(" ", "-")
+        template = TextTemplate(
+            template_id=template_id,
+            name=name,
+            text_color=layer.color,
+            background_color=layer.box_color,
+            font_family=layer.font_family,
+            font_weight=layer.font_weight,
+            border_radius_multiplier=0.35,
+            horizontal_padding_multiplier=0.8,
+            vertical_padding_multiplier=0.45,
+            line_spacing_multiplier=0.25,
+            shadow_blur_multiplier=0.15,
+            enabled=True,
+            auto_uppercase=layer.auto_uppercase,
+        )
+        self.template_engine.templates = [item for item in self.template_engine.templates if item.template_id != template_id]
+        self.template_engine.templates.append(template)
+        self.template_engine.save(TEMPLATE_PATH)
         self._load_templates()
 
     def save_project(self) -> None:
