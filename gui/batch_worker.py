@@ -40,25 +40,32 @@ class BatchRenderWorker(QObject):
                 self.logLine.emit("Batch render cancelled.")
                 break
             self.videoStarted.emit(index, total, video_path)
-            try:
-                project = deepcopy(self.base_project)
-                metadata = probe_video(video_path)
-                project.video_path = video_path
-                project.width = int(metadata["width"])
-                project.height = int(metadata["height"])
-                project.duration = float(metadata["duration"])
-                template = assignments[video_path]
-                for layer in project.text_layers:
-                    self.template_engine.apply_to_layer(layer, template, permanent=False)
-                input_path = Path(video_path)
-                output_dir = input_path.parent / "output"
-                output_dir.mkdir(exist_ok=True)
-                output_path = output_dir / f"{input_path.stem}_output.mp4"
-                self.logLine.emit(f"[{index}/{total}] {input_path.name} → {output_path.name} ({template.name})")
-                render_project(project, str(output_path), self.logLine.emit)
-                self.videoFinished.emit(index, total, str(output_path))
-            except Exception as exc:  # noqa: BLE001
-                self.videoFailed.emit(index, total, video_path, str(exc))
-                self.logLine.emit(f"Failed {video_path}: {exc}")
+            last_error = ""
+            for attempt in range(1, 3):
+                try:
+                    project = deepcopy(self.base_project)
+                    metadata = probe_video(video_path)
+                    project.video_path = video_path
+                    project.width = int(metadata["width"])
+                    project.height = int(metadata["height"])
+                    project.duration = float(metadata["duration"])
+                    template = assignments[video_path]
+                    for layer in project.text_layers:
+                        self.template_engine.apply_to_layer(layer, template, permanent=False)
+                    input_path = Path(video_path)
+                    output_dir = input_path.parent / "output"
+                    output_dir.mkdir(exist_ok=True)
+                    output_path = output_dir / f"{input_path.stem}_output.mp4"
+                    self.logLine.emit(f"[{index}/{total}] attempt {attempt}: {input_path.name} → {output_path.name} ({template.name})")
+                    render_project(project, str(output_path), self.logLine.emit)
+                    self.videoFinished.emit(index, total, str(output_path))
+                    last_error = ""
+                    break
+                except Exception as exc:  # noqa: BLE001
+                    last_error = str(exc)
+                    self.logLine.emit(f"Attempt {attempt} failed for {video_path}: {exc}")
+            if last_error:
+                self.videoFailed.emit(index, total, video_path, last_error)
+                self.logLine.emit(f"Skipped failed item after retry: {video_path}")
             self.overallProgress.emit(index, total)
         self.finished.emit()

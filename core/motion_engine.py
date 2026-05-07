@@ -6,9 +6,10 @@ from dataclasses import dataclass
 @dataclass(frozen=True)
 class MotionState:
     alpha: float = 1.0
-    x: float | None = None
-    y: float | None = None
+    x: float = 0.0
+    y: float = 0.0
     scale: float = 1.0
+    rotation: float = 0.0
 
 
 def clamp(value: float, low: float = 0.0, high: float = 1.0) -> float:
@@ -20,41 +21,41 @@ def ease(progress: float, easing: str = "linear") -> float:
     if easing == "ease-in":
         return p * p
     if easing == "ease-out":
-        return 1.0 - (1.0 - p) * (1.0 - p)
+        return 1 - (1 - p) * (1 - p)
     if easing == "ease-in-out":
-        return 2.0 * p * p if p < 0.5 else 1.0 - pow(-2.0 * p + 2.0, 2.0) / 2.0
+        return 2 * p * p if p < 0.5 else 1 - ((-2 * p + 2) ** 2) / 2
     return p
 
 
-def progress_at(t: float, start_time: float, duration: float, easing: str = "linear") -> float:
+def progress_at(t: float, start: float, duration: float, easing: str = "linear") -> float:
     if duration <= 0:
         return 1.0
-    return ease((t - start_time) / duration, easing)
+    return ease((t - start) / duration, easing)
 
 
-def state_at(
-    preset: str,
-    t: float,
-    start_time: float,
-    duration: float,
-    target_x: float,
-    target_y: float,
-    base_opacity: float = 1.0,
-    easing: str = "linear",
-) -> MotionState:
-    p = progress_at(t, start_time, duration, easing)
-    if t < start_time:
-        p = 0.0
-    if preset == "fade":
-        return MotionState(alpha=base_opacity * p, x=target_x, y=target_y)
-    if preset == "slide":
-        return MotionState(alpha=base_opacity, x=-200.0 + (target_x + 200.0) * p, y=target_y)
-    if preset == "zoom":
-        return MotionState(alpha=base_opacity, x=target_x, y=target_y, scale=1.3 - 0.3 * p)
+def state_at(preset: str, t: float, start: float, duration: float, x: float, y: float, opacity: float = 1.0, easing: str = "linear") -> MotionState:
+    p = 0.0 if t < start else progress_at(t, start, duration, easing)
+    if preset == "fade_in":
+        return MotionState(opacity * p, x, y)
+    if preset == "fade_out":
+        return MotionState(opacity * (1 - p), x, y)
+    if preset == "slide_left":
+        return MotionState(opacity, x + 240 * (1 - p), y)
+    if preset == "slide_right":
+        return MotionState(opacity, x - 240 * (1 - p), y)
+    if preset == "slide_up":
+        return MotionState(opacity, x, y + 180 * (1 - p))
+    if preset == "slide_down":
+        return MotionState(opacity, x, y - 180 * (1 - p))
+    if preset == "zoom_in":
+        return MotionState(opacity, x, y, 0.75 + 0.25 * p)
+    if preset == "zoom_out":
+        return MotionState(opacity, x, y, 1.25 - 0.25 * p)
     if preset == "bounce":
-        overshoot = 1.0 + 0.15 * (1.0 - p) if p < 1.0 else 1.0
-        return MotionState(alpha=base_opacity, x=target_x, y=target_y, scale=overshoot)
-    return MotionState(alpha=base_opacity, x=target_x, y=target_y)
+        return MotionState(opacity, x, y, 1 + 0.16 * (1 - p) * abs(__import__("math").sin(p * 9.42)))
+    if preset == "pop":
+        return MotionState(opacity, x, y, 0.2 + 0.8 * p if p < 1 else 1)
+    return MotionState(opacity, x, y)
 
 
 def ffmpeg_progress_expr(start: float, duration: float, easing: str = "linear") -> str:
@@ -69,23 +70,40 @@ def ffmpeg_progress_expr(start: float, duration: float, easing: str = "linear") 
 
 
 def alpha_expr(start: float, duration: float, opacity: float, preset: str, easing: str = "linear") -> str:
-    if preset != "fade":
-        return f"{opacity}"
     p = ffmpeg_progress_expr(start, duration, easing)
-    return f"if(lt(t,{start}),0,{opacity}*{p})"
+    if preset == "fade_in":
+        return f"if(lt(t,{start}),0,{opacity}*{p})"
+    if preset == "fade_out":
+        return f"{opacity}*(1-{p})"
+    return f"{opacity}"
 
 
-def x_expr(start: float, duration: float, target_x: float, preset: str, easing: str = "linear") -> str:
-    if preset != "slide":
-        return f"{target_x}"
+def x_expr(start: float, duration: float, x: float, preset: str, easing: str = "linear") -> str:
     p = ffmpeg_progress_expr(start, duration, easing)
-    return f"if(lt(t,{start}),-w,-w+({target_x}+w)*{p})"
+    if preset == "slide_left":
+        return f"{x}+240*(1-{p})"
+    if preset == "slide_right":
+        return f"{x}-240*(1-{p})"
+    return f"{x}"
 
 
-def scale_expr(start: float, duration: float, base_scale: float, preset: str, easing: str = "linear") -> str:
+def y_expr(start: float, duration: float, y: float, preset: str, easing: str = "linear") -> str:
     p = ffmpeg_progress_expr(start, duration, easing)
-    if preset == "zoom":
-        return f"{base_scale}*(1+0.3*(1-{p}))"
+    if preset == "slide_up":
+        return f"{y}+180*(1-{p})"
+    if preset == "slide_down":
+        return f"{y}-180*(1-{p})"
+    return f"{y}"
+
+
+def scale_expr(start: float, duration: float, scale: float, preset: str, easing: str = "linear") -> str:
+    p = ffmpeg_progress_expr(start, duration, easing)
+    if preset == "zoom_in":
+        return f"{scale}*(0.75+0.25*{p})"
+    if preset == "zoom_out":
+        return f"{scale}*(1.25-0.25*{p})"
     if preset == "bounce":
-        return f"{base_scale}*(1+0.15*(1-{p})*abs(sin({p}*PI*3)))"
-    return f"{base_scale}"
+        return f"{scale}*(1+0.16*(1-{p})*abs(sin({p}*PI*3)))"
+    if preset == "pop":
+        return f"{scale}*(0.2+0.8*{p})"
+    return f"{scale}"

@@ -41,15 +41,15 @@ class LayerTextItem(QGraphicsTextItem):
         self.on_move = on_move
         self.setDefaultTextColor(_preview_color(layer.color, "white"))
         self.setPlainText(self.layout_data.text)
-        font = QFont(self.layout_data.font_family, self.layout_data.font_size)
-        font.setWeight(QFont.Weight.ExtraBold if self.layout_data.font_weight >= 800 else QFont.Weight.Bold)
+        font = QFont(self.layout_data.template.font_family, self.layout_data.font_size)
+        font.setWeight(QFont.Weight.ExtraBold if self.layout_data.template.font_weight >= 800 else QFont.Weight.Bold)
         self.setFont(font)
         self.setOpacity(motion.alpha)
         self.setRotation(layer.rotation)
         self.setScale(motion.scale)
         self.setFlag(QGraphicsTextItem.GraphicsItemFlag.ItemIsMovable)
         self.setFlag(QGraphicsTextItem.GraphicsItemFlag.ItemIsSelectable)
-        self.setPos(motion.x if motion.x is not None else self.layout_data.x, motion.y if motion.y is not None else self.layout_data.y)
+        self.setPos(motion.x, motion.y)
         self.setZValue(20)
 
     def _text_rect(self) -> QRectF:
@@ -66,10 +66,10 @@ class LayerTextItem(QGraphicsTextItem):
         painter.save()
         if self.layer.box_enabled:
             painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QBrush(_preview_color(self.layer.box_color, "black")))
-            painter.drawRoundedRect(self.boundingRect(), self.layout_data.border_radius, self.layout_data.border_radius)
+            painter.setBrush(QBrush(_preview_color(self.layout_data.template.background_color, "black")))
+            painter.drawRoundedRect(self.boundingRect(), self.layout_data.radius, self.layout_data.radius)
         metrics = QFontMetricsF(self.font())
-        baseline = self.layout_data.vertical_padding + metrics.ascent() if self.layer.box_enabled else metrics.ascent()
+        baseline = self.layout_data.vpad + metrics.ascent() if self.layer.box_enabled else metrics.ascent()
         for line in self.layout_data.lines:
             line_width = metrics.horizontalAdvance(line)
             x = (self.layout_data.box_width - line_width) / 2 if self.layer.box_enabled else 0
@@ -80,7 +80,7 @@ class LayerTextItem(QGraphicsTextItem):
                 painter.setBrush(Qt.BrushStyle.NoBrush)
                 painter.drawPath(path)
             painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QBrush(_preview_color(self.layer.color, "white")))
+            painter.setBrush(QBrush(_preview_color(self.layout_data.template.text_color, "white")))
             painter.drawPath(path)
             baseline += metrics.height() + self.layout_data.line_spacing
         painter.restore()
@@ -107,7 +107,7 @@ class LayerStickerItem(QGraphicsPixmapItem):
         self.setRotation(layer.rotation)
         self.setFlag(QGraphicsPixmapItem.GraphicsItemFlag.ItemIsMovable)
         self.setFlag(QGraphicsPixmapItem.GraphicsItemFlag.ItemIsSelectable)
-        self.setPos(motion.x if motion.x is not None else self.layout_data.x, motion.y if motion.y is not None else self.layout_data.y)
+        self.setPos(motion.x, motion.y)
         self.setZValue(30)
 
     def mouseReleaseEvent(self, event) -> None:  # type: ignore[no-untyped-def]

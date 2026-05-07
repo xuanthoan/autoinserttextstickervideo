@@ -6,46 +6,49 @@ from uuid import uuid4
 
 @dataclass
 class TextLayer:
-    text: str = "Sample text"
+    text: str = "YOUR CAPTION"
     start_time: float = 0.0
     end_time: float = 5.0
     x: float = 100.0
     y: float = 100.0
     rotation: float = 0.0
+    opacity: float = 1.0
     font_path: str = ""
     font_family: str = "Montserrat ExtraBold"
+    fallback_font_family: str = "Poppins Bold"
     font_weight: int = 800
-    font_size: int = 48
-    color: str = "white"
+    font_size: int = 54
+    template_id: str = "orange-white"
+    auto_uppercase: bool = False
     stroke_enabled: bool = False
     stroke_color: str = "black"
     stroke_width: int = 0
-    box_enabled: bool = False
-    box_color: str = "black@0.5"
-    box_padding: int = 10
-    box_radius: int = 0
-    template_id: str = "orange-white"
-    auto_uppercase: bool = False
-    opacity: float = 1.0
-    motion_preset: str = "none"
+    box_enabled: bool = True
+    box_padding: int = 0
+    motion_preset: str = "fade_in"
     motion_duration: float = 0.5
-    easing: str = "linear"
+    easing: str = "ease-out"
     layer_id: str = field(default_factory=lambda: f"text-{uuid4().hex[:8]}")
 
     @property
     def kind(self) -> str:
         return "text"
 
-    def effective_box_padding(self) -> int:
-        """Scale background padding with the current font size.
+    @property
+    def duration(self) -> float:
+        return max(0.0, self.end_time - self.start_time)
 
-        The inspector value acts as a minimum so existing projects keep their
-        spacing, while larger text automatically gets a larger background.
-        """
+    def scaled_padding_x(self) -> int:
         return max(self.box_padding, round(self.font_size * 0.8))
 
-    def effective_box_radius(self) -> int:
-        """Scale corner radius with font/background size unless overridden."""
-        if self.box_radius > 0:
-            return self.box_radius
-        return max(4, round(self.font_size * 0.35))
+    def scaled_padding_y(self) -> int:
+        return max(round(self.box_padding * 0.56), round(self.font_size * 0.45))
+
+    def scaled_radius(self) -> int:
+        return round(self.font_size * 0.35)
+
+    def scaled_line_spacing(self) -> int:
+        return round(self.font_size * 0.25)
+
+    def scaled_shadow_blur(self) -> int:
+        return round(self.font_size * 0.15)

@@ -12,8 +12,9 @@ from core.text_layer import TextLayer
 @dataclass
 class Project:
     video_path: str = ""
-    width: int = 1920
-    height: int = 1080
+    batch_videos: list[str] = field(default_factory=list)
+    width: int = 1080
+    height: int = 1920
     duration: float = 0.0
     text_layers: list[TextLayer] = field(default_factory=list)
     sticker_layers: list[StickerLayer] = field(default_factory=list)
@@ -22,14 +23,14 @@ class Project:
         return [*self.text_layers, *self.sticker_layers]
 
     def add_text_layer(self, layer: TextLayer | None = None) -> TextLayer:
-        new_layer = layer or TextLayer(end_time=max(5.0, min(self.duration, 5.0) if self.duration else 5.0))
-        self.text_layers.append(new_layer)
-        return new_layer
+        item = layer or TextLayer(end_time=max(5.0, min(self.duration, 5.0) if self.duration else 5.0))
+        self.text_layers.append(item)
+        return item
 
     def add_sticker_layer(self, layer: StickerLayer | None = None) -> StickerLayer:
-        new_layer = layer or StickerLayer(end_time=max(5.0, min(self.duration, 5.0) if self.duration else 5.0))
-        self.sticker_layers.append(new_layer)
-        return new_layer
+        item = layer or StickerLayer(end_time=max(5.0, min(self.duration, 5.0) if self.duration else 5.0))
+        self.sticker_layers.append(item)
+        return item
 
     def remove_layer(self, layer_id: str) -> None:
         self.text_layers = [layer for layer in self.text_layers if layer.layer_id != layer_id]
@@ -38,6 +39,7 @@ class Project:
     def to_dict(self) -> dict[str, Any]:
         return {
             "video_path": self.video_path,
+            "batch_videos": self.batch_videos,
             "width": self.width,
             "height": self.height,
             "duration": self.duration,
@@ -49,8 +51,9 @@ class Project:
     def from_dict(cls, payload: dict[str, Any]) -> "Project":
         project = cls(
             video_path=payload.get("video_path", ""),
-            width=int(payload.get("width", 1920)),
-            height=int(payload.get("height", 1080)),
+            batch_videos=list(payload.get("batch_videos", [])),
+            width=int(payload.get("width", 1080)),
+            height=int(payload.get("height", 1920)),
             duration=float(payload.get("duration", 0.0)),
         )
         project.text_layers = [TextLayer(**item) for item in payload.get("text_layers", [])]

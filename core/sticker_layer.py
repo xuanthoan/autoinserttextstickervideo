@@ -16,9 +16,13 @@ class StickerLayer:
     opacity: float = 1.0
     motion_preset: str = "none"
     motion_duration: float = 0.5
-    easing: str = "linear"
+    easing: str = "ease-out"
     layer_id: str = field(default_factory=lambda: f"sticker-{uuid4().hex[:8]}")
 
     @property
     def kind(self) -> str:
         return "sticker"
+
+    @property
+    def duration(self) -> float:
+        return max(0.0, self.end_time - self.start_time)

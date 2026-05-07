@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from pathlib import Path
 
 from PySide6.QtCore import QThread, QUrl, Qt
@@ -42,7 +43,7 @@ from utils.ffmpeg_helper import probe_video
 
 LOGGER = logging.getLogger(__name__)
 TEMPLATE_PATH = Path("templates/text_templates.json")
-MOTION_PRESETS = ["none", "fade", "slide", "zoom", "bounce"]
+MOTION_PRESETS = ["none", "fade_in", "fade_out", "slide_left", "slide_right", "slide_up", "slide_down", "zoom_in", "zoom_out", "bounce", "pop"]
 EASINGS = ["linear", "ease-in", "ease-out", "ease-in-out"]
 
 
@@ -54,6 +55,7 @@ class MainWindow(QMainWindow):
         self.video_queue: list[str] = []
         self.batch_thread: QThread | None = None
         self.batch_worker: BatchRenderWorker | None = None
+        self.batch_started_at = 0.0
         self.selected_layer_id: str | None = None
         self.canvas = PreviewCanvas()
         self.timeline = TimelinePanel()
@@ -76,6 +78,7 @@ class MainWindow(QMainWindow):
         actions = [
             ("Open Video", self.open_video),
             ("Add Videos", self.add_videos_to_queue),
+            ("Import Folder", self.import_video_folder),
             ("Play", self.play_video),
             ("Pause", self.pause_video),
             ("Stop", self.stop_video),
@@ -176,6 +179,7 @@ class MainWindow(QMainWindow):
             ("Remove", self.remove_selected_videos),
             ("Clear", self.clear_video_queue),
             ("Render All", self.render_batch),
+            ("Cancel", self.cancel_batch),
         ]:
             button = QPushButton(label)
             button.clicked.connect(callback)
@@ -184,11 +188,13 @@ class MainWindow(QMainWindow):
         self.video_progress.setFormat("Current video: %p%")
         self.batch_progress = QProgressBar()
         self.batch_progress.setFormat("Batch: %v/%m")
+        self.batch_eta_label = QLabel("Elapsed: 00:00 | ETA: --:--")
         layout.addWidget(QLabel("Drag videos here or use Add. Drag rows to reorder."))
         layout.addWidget(self.video_queue_widget)
         layout.addLayout(controls)
         layout.addWidget(self.video_progress)
         layout.addWidget(self.batch_progress)
+        layout.addWidget(self.batch_eta_label)
         batch_dock.setWidget(panel)
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, batch_dock)
 
@@ -300,6 +306,15 @@ class MainWindow(QMainWindow):
         return None
 
 
+    def import_video_folder(self) -> None:
+        folder = QFileDialog.getExistingDirectory(self, "Import video folder")
+        if not folder:
+            return
+        paths = [str(path) for path in sorted(Path(folder).iterdir()) if path.suffix.lower() in {".mp4", ".mov", ".mkv", ".avi"}]
+        self._add_queue_paths(paths)
+        if paths and not self.project.video_path:
+            self.load_video_from_queue(paths[0])
+
     def add_videos_to_queue(self) -> None:
         paths, _ = QFileDialog.getOpenFileNames(self, "Add videos to batch", "", "Video (*.mp4 *.mov *.mkv *.avi)")
         self._add_queue_paths(paths)
@@ -367,6 +382,7 @@ class MainWindow(QMainWindow):
             self.add_text()
         self.log_view.clear()
         self.video_progress.setRange(0, 0)
+        self.batch_started_at = time.monotonic()
         self.batch_progress.setRange(0, len(queue))
         self.batch_progress.setValue(0)
         self.batch_thread = QThread(self)
@@ -383,6 +399,11 @@ class MainWindow(QMainWindow):
         self.batch_worker.finished.connect(self.batch_worker.deleteLater)
         self.batch_thread.finished.connect(self.batch_thread.deleteLater)
         self.batch_thread.start()
+
+    def cancel_batch(self) -> None:
+        if self.batch_worker is not None:
+            self.batch_worker.cancel()
+            self.log_view.append("Cancel requested; current render will finish before stopping.")
 
     def on_batch_video_started(self, index: int, total: int, path: str) -> None:
         self.video_progress.setRange(0, 0)
@@ -401,6 +422,13 @@ class MainWindow(QMainWindow):
     def on_batch_progress(self, done: int, total: int) -> None:
         self.batch_progress.setMaximum(total)
         self.batch_progress.setValue(done)
+        elapsed = max(0.0, time.monotonic() - self.batch_started_at)
+        eta = 0.0 if done <= 0 else elapsed / done * max(0, total - done)
+        self.batch_eta_label.setText(f"Elapsed: {self._fmt_seconds(elapsed)} | ETA: {self._fmt_seconds(eta)}")
+
+    def _fmt_seconds(self, seconds: float) -> str:
+        total = round(seconds)
+        return f"{total // 60:02d}:{total % 60:02d}"
 
     def on_batch_finished(self) -> None:
         self.video_progress.setRange(0, 100)

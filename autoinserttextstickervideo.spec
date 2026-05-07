@@ -14,7 +14,7 @@ a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=bundled_bins,
-    datas=[('templates', 'templates')],
+    datas=[('templates', 'templates'), ('assets', 'assets')],
     hiddenimports=collect_submodules('PySide6'),
     hookspath=[],
     hooksconfig={},

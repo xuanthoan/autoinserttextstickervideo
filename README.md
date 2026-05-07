@@ -1,17 +1,41 @@
 # Auto Insert Text Sticker Video
 
-Python 3.11+ desktop editor for adding animated text and sticker overlays to video without resizing the source. The GUI is built with PySide6, while all video processing is delegated to FFmpeg/FFprobe subprocesses.
+A lightweight Python 3.11+ desktop app for TikTok/Reels/Shorts mass-production overlays. The UI is PySide6, preview is simulated with `QGraphicsView`, and every final video render is orchestrated through FFmpeg/FFprobe subprocesses with `filter_complex`.
 
 ## Features
 
-- QGraphicsView preview canvas with live QMediaPlayer video playback, draggable text/sticker overlays, and timeline-aware motion preview.
-- True sequential batch rendering with a multi-video queue, drag/drop additions, reorder/remove/clear controls, and per-video/overall progress.
-- Snap-to-center guidelines with a 10 px threshold.
-- Timeline panel for per-layer start and end times.
-- Inspector for text, font size, template selection, safe optional stroke controls, auto-scaling rounded background padding, opacity, sticker scale, rotation, easing, and motion presets. Free text/background color pickers are intentionally removed for standardized templates.
-- JSON text templates in `templates/text_templates.json`.
-- FFmpeg `filter_complex` export pipeline with timestamp reset, drawtext, sticker loop inputs, overlay chaining, motion expressions, `overlay=shortest=1`, `-fflags +genpts`, and `-vsync 2`.
-- Export automatically writes to an `output/` sub-folder beside the input video using the input video name, e.g. `input/output/my_video_output.mp4`.
+- Single-video, multi-video, folder, and drag/drop import for `.mp4`, `.mov`, `.avi`, and `.mkv`.
+- Sequential batch queue with reorder/remove/clear, cancel, retry failed item once, skip failed item, per-video progress, overall progress, elapsed time, and ETA.
+- Template-driven workflow with exactly seven built-in caption templates and no free text/background color pickers during normal editing.
+- Template panel with preview swatch, name, enable/disable toggle, duplicate, reset, and drag reorder.
+- Realtime lightweight preview using `QGraphicsView`/`QGraphicsScene`, draggable overlays, selection, center snapping guides, and motion simulation.
+- Timeline layer controls for start/end/duration trimming.
+- Text and sticker layers with opacity, rotation, timeline, and motion presets.
+- FFmpeg export uses `-fflags +genpts`, `setpts=PTS-STARTPTS`, `overlay=shortest=1`, H.264 `-crf 18`, `-preset veryfast`, and AAC audio.
+
+## Built-in caption templates
+
+1. Orange White — `#FFFFFF` on `#F57C4D`
+2. White Black — `#000000` on `#FFFFFF`
+3. Pink White — `#FFFFFF` on `#FF3FA4`
+4. Red White — `#FFFFFF` on `#FF4B4B`
+5. Yellow White — `#FFFFFF` on `#EFCB39`
+6. Pastel Pink — `#F0537A` on `#FFD7DF`
+7. Green White — `#FFFFFF` on `#8BC34A`
+
+Template #1 is assigned automatically when a new text layer is created. If one template is enabled, all batch videos use it. If multiple templates are enabled, the batch renderer randomizes per video and avoids repeating the same template consecutively when possible.
+
+## Social caption layout rules
+
+- Font: Montserrat ExtraBold, fallback Poppins Bold.
+- `horizontalPadding = fontSize * 0.8`
+- `verticalPadding = fontSize * 0.45`
+- `borderRadius = fontSize * 0.35`
+- `lineSpacing = fontSize * 0.25`
+- `shadowBlur = fontSize * 0.15`
+- Safe area: top `8%`, bottom `16%`, left/right `5%`.
+- Max text width: `videoWidth * 0.78`.
+- Minimum font size: `18`.
 
 ## Requirements
 
@@ -19,7 +43,7 @@ Python 3.11+ desktop editor for adding animated text and sticker overlays to vid
 python -m pip install -r requirements.txt
 ```
 
-Install FFmpeg and FFprobe on `PATH`, place bundled binaries in `bin/`, or drop `ffmpeg.exe` and `ffprobe.exe` directly next to `main.py` for Windows/source-tree runs.
+Install FFmpeg and FFprobe on `PATH`, place binaries in `bin/`, or put `ffmpeg.exe` and `ffprobe.exe` next to `main.py`.
 
 ## Run
 
@@ -33,21 +57,4 @@ python main.py
 pyinstaller --onedir --windowed main.py
 ```
 
-A PyInstaller spec is also provided:
-
-```bash
-pyinstaller autoinserttextstickervideo.spec
-```
-
-
-## Text template engine
-
-The reusable template engine in `core/text_template_engine.py` provides TikTok/Reels/Shorts-style rounded caption presets. It uses Montserrat ExtraBold by default with Poppins Bold fallback, center alignment, optional uppercase, safe-area clamping, max-width wrapping (`videoWidth * 0.78`), minimum font-size protection, and proportional spacing formulas:
-
-- `horizontalPadding = fontSize * 0.8`
-- `verticalPadding = fontSize * 0.45`
-- `borderRadius = fontSize * 0.35`
-- `lineSpacing = fontSize * 0.25`
-- `shadowBlur = fontSize * 0.15`
-
-Exactly seven built-in templates are stored in `templates/text_templates.json`; users enable templates from the template panel, duplicate/reset/reorder them, and batch rendering assigns enabled templates with non-consecutive randomization when multiple templates are active. During export, text layers are rendered as high-quality transparent rounded PNG assets and FFmpeg only overlays those assets, which avoids invalid `drawtext/geq` filter failures such as exit code `4294967274`.
+The provided `autoinserttextstickervideo.spec` also bundles templates and optional local binaries.
