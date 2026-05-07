@@ -3,9 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Callable
 
-from PySide6.QtCore import QRectF, QSizeF, Qt, Signal
+from PySide6.QtCore import QRectF, Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QFont, QFontMetricsF, QImage, QPainter, QPainterPath, QPen, QPixmap
-from PySide6.QtMultimediaWidgets import QGraphicsVideoItem
 from PySide6.QtWidgets import QGraphicsPixmapItem, QGraphicsRectItem, QGraphicsScene, QGraphicsTextItem, QGraphicsView, QStyleOptionGraphicsItem, QWidget
 
 from core.motion_engine import state_at
@@ -119,7 +118,6 @@ class LayerStickerItem(QGraphicsPixmapItem):
 class PreviewCanvas(QGraphicsView):
     layerMoved = Signal(str, float, float)
     filesDropped = Signal(list)
-    videoOutputChanged = Signal(object)
 
     def __init__(self) -> None:
         super().__init__()
@@ -129,7 +127,7 @@ class PreviewCanvas(QGraphicsView):
         self.setAcceptDrops(True)
         self.project: Project | None = None
         self.current_time = 0.0
-        self.video_item: QGraphicsVideoItem | None = None
+        self.video_item: QGraphicsRectItem | None = None
         self.video_backdrop: QGraphicsRectItem | None = None
         self.overlay_items: list[LayerTextItem | LayerStickerItem] = []
         self.template_engine = TextTemplateEngine.load("templates/text_templates.json")
@@ -154,11 +152,8 @@ class PreviewCanvas(QGraphicsView):
             return
         self.video_backdrop = self.scene.addRect(0, 0, self.project.width, self.project.height, QPen(QColor("#555")), QBrush(QColor("#111")))
         self.video_backdrop.setZValue(-20)
-        self.video_item = QGraphicsVideoItem()
-        self.video_item.setSize(QSizeF(self.project.width, self.project.height))
+        self.video_item = self.scene.addRect(0, 0, self.project.width, self.project.height, QPen(Qt.PenStyle.NoPen), QBrush(QColor("#181818")))
         self.video_item.setZValue(-10)
-        self.scene.addItem(self.video_item)
-        self.videoOutputChanged.emit(self.video_item)
         self.center_v = self.scene.addLine(self.project.width / 2, 0, self.project.width / 2, self.project.height, QPen(QColor("#00d1ff"), 1, Qt.PenStyle.DashLine))
         self.center_h = self.scene.addLine(0, self.project.height / 2, self.project.width, self.project.height / 2, QPen(QColor("#00d1ff"), 1, Qt.PenStyle.DashLine))
         self.center_v.setZValue(100)

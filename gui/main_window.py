@@ -4,8 +4,7 @@ import logging
 import time
 from pathlib import Path
 
-from PySide6.QtCore import QThread, QUrl, Qt
-from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
+from PySide6.QtCore import QThread, QTimer, Qt
 from PySide6.QtWidgets import (
     QCheckBox,
     QAbstractItemView,
@@ -61,9 +60,10 @@ class MainWindow(QMainWindow):
         self.timeline = TimelinePanel()
         self.log_view = QTextEdit()
         self.log_view.setReadOnly(True)
-        self.player = QMediaPlayer(self)
-        self.audio_output = QAudioOutput(self)
-        self.player.setAudioOutput(self.audio_output)
+        self.preview_timer = QTimer(self)
+        self.preview_timer.setInterval(33)
+        self.preview_started_at = 0.0
+        self.preview_start_time = 0.0
         self.setCentralWidget(self.canvas)
         self._build_toolbar()
         self._build_docks()
@@ -272,8 +272,7 @@ class MainWindow(QMainWindow):
     def _connect_signals(self) -> None:
         self.canvas.layerMoved.connect(self.move_layer)
         self.canvas.filesDropped.connect(self.handle_files_dropped)
-        self.canvas.videoOutputChanged.connect(self.player.setVideoOutput)
-        self.player.positionChanged.connect(self.update_preview_time)
+        self.preview_timer.timeout.connect(self.advance_preview_time)
         self.timeline.layerTimingChanged.connect(self.change_timing)
         self.timeline.layerSelected.connect(self.select_layer)
         self.text_input.editingFinished.connect(self.apply_inspector)
@@ -566,26 +565,29 @@ class MainWindow(QMainWindow):
         self.timeline.refresh()
 
     def _set_player_source(self, path: str) -> None:
-        self.player.stop()
-        self.player.setSource(QUrl.fromLocalFile(path))
-        if self.canvas.video_item is not None:
-            self.player.setVideoOutput(self.canvas.video_item)
+        del path
+        self.stop_video()
 
     def play_video(self) -> None:
         if not self.project.video_path:
             QMessageBox.warning(self, "Missing video", "Open a source video first.")
             return
-        self.player.play()
+        self.preview_start_time = self.canvas.current_time
+        self.preview_started_at = time.monotonic()
+        self.preview_timer.start()
 
     def pause_video(self) -> None:
-        self.player.pause()
+        self.preview_timer.stop()
 
     def stop_video(self) -> None:
-        self.player.stop()
+        self.preview_timer.stop()
         self.canvas.set_time(0.0)
 
-    def update_preview_time(self, position_ms: int) -> None:
-        self.canvas.set_time(position_ms / 1000.0)
+    def advance_preview_time(self) -> None:
+        duration = max(self.project.duration, 0.1)
+        elapsed = time.monotonic() - self.preview_started_at
+        current = (self.preview_start_time + elapsed) % duration
+        self.canvas.set_time(current)
 
     def _load_templates(self) -> None:
         TEMPLATE_PATH.parent.mkdir(exist_ok=True)
