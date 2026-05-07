@@ -113,8 +113,8 @@ def extract_preview_frame(video_path: str, seek_seconds: float = 0.05) -> Path:
         video_path,
         "-frames:v",
         "1",
-        "-vsync",
-        "2",
+        "-fps_mode",
+        "vfr",
         str(target),
     ]
     subprocess.run(command, check=True, capture_output=True, text=True, timeout=15)

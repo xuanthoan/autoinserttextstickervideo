@@ -23,8 +23,12 @@ class FFmpegCommand:
         return " ".join(shlex.quote(part) for part in self.args)
 
 
+def _escape_expr(value: str) -> str:
+    return value.replace("\\", "\\\\").replace(",", "\\,")
+
+
 def _enable(layer: TextLayer | StickerLayer) -> str:
-    return f"between(t,{layer.start_time},{layer.end_time})"
+    return _escape_expr(f"between(t,{layer.start_time},{layer.end_time})")
 
 
 def _asset_margin(layout) -> int:  # type: ignore[no-untyped-def]
@@ -33,10 +37,10 @@ def _asset_margin(layout) -> int:  # type: ignore[no-untyped-def]
 
 def _text_asset_filter(layer: TextLayer, layout: TextLayout, source: str, input_index: int, text_index: int) -> tuple[list[str], str]:
     margin = _asset_margin(layout)
-    alpha = alpha_expr(layer.start_time, layer.motion_duration, layer.opacity, layer.motion_preset, layer.easing)
-    scale = scale_expr(layer.start_time, layer.motion_duration, 1.0, layer.motion_preset, layer.easing)
-    x = x_expr(layer.start_time, layer.motion_duration, layout.x - margin, layer.motion_preset, layer.easing)
-    y = y_expr(layer.start_time, layer.motion_duration, layout.y - margin, layer.motion_preset, layer.easing)
+    alpha = _escape_expr(alpha_expr(layer.start_time, layer.motion_duration, layer.opacity, layer.motion_preset, layer.easing))
+    scale = _escape_expr(scale_expr(layer.start_time, layer.motion_duration, 1.0, layer.motion_preset, layer.easing))
+    x = _escape_expr(x_expr(layer.start_time, layer.motion_duration, layout.x - margin, layer.motion_preset, layer.easing))
+    y = _escape_expr(y_expr(layer.start_time, layer.motion_duration, layout.y - margin, layer.motion_preset, layer.easing))
     prep = (
         f"[{input_index}:v]format=rgba,scale=w='iw*{scale}':h='ih*{scale}':eval=frame,"
         f"colorchannelmixer=aa='{alpha}'[txt{text_index}]"
@@ -47,10 +51,10 @@ def _text_asset_filter(layer: TextLayer, layout: TextLayout, source: str, input_
 
 
 def _sticker_filter(layer: StickerLayer, source: str, input_index: int, sticker_index: int) -> tuple[list[str], str]:
-    alpha = alpha_expr(layer.start_time, layer.motion_duration, layer.opacity, layer.motion_preset, layer.easing)
-    x = x_expr(layer.start_time, layer.motion_duration, layer.x, layer.motion_preset, layer.easing)
-    y = y_expr(layer.start_time, layer.motion_duration, layer.y, layer.motion_preset, layer.easing)
-    scale = scale_expr(layer.start_time, layer.motion_duration, layer.scale, layer.motion_preset, layer.easing)
+    alpha = _escape_expr(alpha_expr(layer.start_time, layer.motion_duration, layer.opacity, layer.motion_preset, layer.easing))
+    x = _escape_expr(x_expr(layer.start_time, layer.motion_duration, layer.x, layer.motion_preset, layer.easing))
+    y = _escape_expr(y_expr(layer.start_time, layer.motion_duration, layer.y, layer.motion_preset, layer.easing))
+    scale = _escape_expr(scale_expr(layer.start_time, layer.motion_duration, layer.scale, layer.motion_preset, layer.easing))
     prep = (
         f"[{input_index}:v]setpts=PTS-STARTPTS,format=rgba,"
         f"scale=w='iw*{scale}':h='ih*{scale}':eval=frame,"
@@ -119,7 +123,7 @@ def build_ffmpeg_command(project: Project, output_path: str, require_binaries: b
         "-progress", "pipe:1", "-nostats",
         "-map", "[final]", "-map", "0:a?",
         "-c:v", "libx264", "-crf", "18", "-preset", "veryfast",
-        "-c:a", "aac", "-b:a", "192k", "-vsync", "2", "-movflags", "+faststart",
+        "-c:a", "aac", "-b:a", "192k", "-fps_mode", "vfr", "-movflags", "+faststart",
         str(Path(output_path)),
     ])
     return FFmpegCommand(args, ";".join(filters))

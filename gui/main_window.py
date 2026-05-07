@@ -122,13 +122,20 @@ class MainWindow(QMainWindow):
         self.scale_value.setSingleStep(0.05)
         self.rotation = QDoubleSpinBox()
         self.rotation.setRange(-360.0, 360.0)
-        self.motion = QComboBox()
-        self.motion.addItems(MOTION_PRESETS)
-        self.motion_duration = QDoubleSpinBox()
-        self.motion_duration.setRange(0.0, 60.0)
-        self.motion_duration.setSingleStep(0.1)
-        self.easing = QComboBox()
-        self.easing.addItems(EASINGS)
+        self.text_motion = QComboBox()
+        self.text_motion.addItems(MOTION_PRESETS)
+        self.text_motion_duration = QDoubleSpinBox()
+        self.text_motion_duration.setRange(0.0, 60.0)
+        self.text_motion_duration.setSingleStep(0.1)
+        self.text_easing = QComboBox()
+        self.text_easing.addItems(EASINGS)
+        self.sticker_motion = QComboBox()
+        self.sticker_motion.addItems(MOTION_PRESETS)
+        self.sticker_motion_duration = QDoubleSpinBox()
+        self.sticker_motion_duration.setRange(0.0, 60.0)
+        self.sticker_motion_duration.setSingleStep(0.1)
+        self.sticker_easing = QComboBox()
+        self.sticker_easing.addItems(EASINGS)
         self.template_combo = QComboBox()
         self.sticker_file = QLineEdit()
         self.sticker_file.setReadOnly(True)
@@ -149,18 +156,21 @@ class MainWindow(QMainWindow):
             ("Stroke width", self.stroke_width),
             ("Background", self.box_enabled),
             ("Min background padding", self.box_padding),
+            ("Text motion", self.text_motion),
+            ("Text motion duration", self.text_motion_duration),
+            ("Text easing", self.text_easing),
             ("STICKER", QLabel("")),
             ("Sticker File", self.sticker_file),
             ("", self.select_sticker_button),
             ("", self.clear_sticker_button),
             ("Sticker scale", self.scale_value),
+            ("Sticker motion", self.sticker_motion),
+            ("Sticker motion duration", self.sticker_motion_duration),
+            ("Sticker easing", self.sticker_easing),
             ("Opacity", self.opacity),
             ("X", self.x_value),
             ("Y", self.y_value),
             ("Rotation", self.rotation),
-            ("Motion", self.motion),
-            ("Motion duration", self.motion_duration),
-            ("Easing", self.easing),
             ("", self.save_template_button),
         ]:
             self.form.addRow(label, widget)
@@ -303,9 +313,12 @@ class MainWindow(QMainWindow):
         self.y_value.valueChanged.connect(self.apply_inspector)
         self.scale_value.valueChanged.connect(self.apply_inspector)
         self.rotation.valueChanged.connect(self.apply_inspector)
-        self.motion.currentTextChanged.connect(self.apply_inspector)
-        self.motion_duration.valueChanged.connect(self.apply_inspector)
-        self.easing.currentTextChanged.connect(self.apply_inspector)
+        self.text_motion.currentTextChanged.connect(self.apply_inspector)
+        self.text_motion_duration.valueChanged.connect(self.apply_inspector)
+        self.text_easing.currentTextChanged.connect(self.apply_inspector)
+        self.sticker_motion.currentTextChanged.connect(self.apply_inspector)
+        self.sticker_motion_duration.valueChanged.connect(self.apply_inspector)
+        self.sticker_easing.currentTextChanged.connect(self.apply_inspector)
         self.template_combo.currentTextChanged.connect(self.apply_template)
         self.select_sticker_button.clicked.connect(self.select_sticker_inline)
         self.clear_sticker_button.clicked.connect(self.clear_sticker_inline)
@@ -640,6 +653,13 @@ class MainWindow(QMainWindow):
             self.stroke_width.setValue(text_layer.stroke_width)
             self.box_enabled.setChecked(text_layer.box_enabled)
             self.box_padding.setValue(text_layer.box_padding)
+            self.text_motion.setCurrentText(text_layer.motion_preset)
+            self.text_motion_duration.setValue(text_layer.motion_duration)
+            self.text_easing.setCurrentText(text_layer.easing)
+        if sticker_layer is not None:
+            self.sticker_motion.setCurrentText(sticker_layer.motion_preset)
+            self.sticker_motion_duration.setValue(sticker_layer.motion_duration)
+            self.sticker_easing.setCurrentText(sticker_layer.easing)
         if layer is None:
             self.layer_label.setText("No layer selected")
         else:
@@ -648,10 +668,10 @@ class MainWindow(QMainWindow):
             self.y_value.setValue(layer.y)
             self.opacity.setValue(layer.opacity)
             self.rotation.setValue(layer.rotation)
-            self.motion.setCurrentText(layer.motion_preset)
-            self.motion_duration.setValue(layer.motion_duration)
-            self.easing.setCurrentText(layer.easing)
             if isinstance(layer, StickerLayer):
+                self.sticker_motion.setCurrentText(layer.motion_preset)
+                self.sticker_motion_duration.setValue(layer.motion_duration)
+                self.sticker_easing.setCurrentText(layer.easing)
                 self.scale_value.setValue(layer.scale)
             else:
                 self.scale_value.setValue(1.0)
@@ -660,9 +680,9 @@ class MainWindow(QMainWindow):
         for widget in (self.text_input, self.template_combo, self.select_sticker_button, self.sticker_file):
             widget.setEnabled(True)
         self.clear_sticker_button.setEnabled(sticker_layer is not None)
-        for widget in (self.font_path, self.font_size, self.stroke_enabled, self.stroke_width, self.box_enabled, self.box_padding, self.save_template_button):
+        for widget in (self.font_path, self.font_size, self.stroke_enabled, self.stroke_width, self.box_enabled, self.box_padding, self.text_motion, self.text_motion_duration, self.text_easing, self.save_template_button):
             widget.setEnabled(text_layer is not None)
-        for widget in (self.scale_value,):
+        for widget in (self.scale_value, self.sticker_motion, self.sticker_motion_duration, self.sticker_easing):
             widget.setEnabled(sticker_layer is not None)
 
     def apply_inspector(self) -> None:
@@ -676,6 +696,9 @@ class MainWindow(QMainWindow):
             text_layer.stroke_width = self.stroke_width.value() if text_layer.stroke_enabled else 0
             text_layer.box_enabled = self.box_enabled.isChecked()
             text_layer.box_padding = self.box_padding.value()
+            text_layer.motion_preset = self.text_motion.currentText()
+            text_layer.motion_duration = self.text_motion_duration.value()
+            text_layer.easing = self.text_easing.currentText()
         if layer is None:
             self.canvas.refresh_overlays()
             self.timeline.refresh()
@@ -684,10 +707,10 @@ class MainWindow(QMainWindow):
         layer.y = self.y_value.value()
         layer.opacity = self.opacity.value()
         layer.rotation = self.rotation.value()
-        layer.motion_preset = self.motion.currentText()
-        layer.motion_duration = self.motion_duration.value()
-        layer.easing = self.easing.currentText()
         if isinstance(layer, StickerLayer):
+            layer.motion_preset = self.sticker_motion.currentText()
+            layer.motion_duration = self.sticker_motion_duration.value()
+            layer.easing = self.sticker_easing.currentText()
             layer.scale = self.scale_value.value()
         self.canvas.refresh_overlays()
         self.timeline.refresh()
