@@ -4,7 +4,8 @@ import logging
 import time
 from pathlib import Path
 
-from PySide6.QtCore import QThread, QTimer, Qt
+from PySide6.QtCore import QThread, QTimer, Qt, QUrl
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QCheckBox,
     QAbstractItemView,
@@ -39,6 +40,7 @@ from gui.batch_worker import BatchRenderWorker
 from gui.preview_canvas import PreviewCanvas
 from gui.timeline_panel import TimelinePanel
 from utils.ffmpeg_helper import probe_video
+from utils.output_naming import unique_output_path
 from utils.paths import resource_path
 
 LOGGER = logging.getLogger(__name__)
@@ -57,6 +59,7 @@ class MainWindow(QMainWindow):
         self.batch_worker: BatchRenderWorker | None = None
         self.batch_started_at = 0.0
         self.selected_layer_id: str | None = None
+        self.last_output_dir: Path | None = None
         self.canvas = PreviewCanvas()
         self.timeline = TimelinePanel()
         self.log_view = QTextEdit()
@@ -89,6 +92,7 @@ class MainWindow(QMainWindow):
             ("Load Project", self.load_project),
             ("Export MP4", self.export_video),
             ("Render Batch", self.render_batch),
+            ("Open Output Folder", self.open_output_folder),
         ]
         for label, callback in actions:
             action = toolbar.addAction(label)
@@ -181,6 +185,7 @@ class MainWindow(QMainWindow):
             ("Clear", self.clear_video_queue),
             ("Render All", self.render_batch),
             ("Cancel", self.cancel_batch),
+            ("Open Output", self.open_output_folder),
         ]:
             button = QPushButton(label)
             button.clicked.connect(callback)
@@ -417,6 +422,7 @@ class MainWindow(QMainWindow):
     def on_batch_video_finished(self, index: int, total: int, output_path: str) -> None:
         self.video_progress.setRange(0, 100)
         self.video_progress.setValue(100)
+        self.last_output_dir = Path(output_path).parent
         self.log_view.append(f"Finished {index}/{total}: {output_path}")
 
     def on_batch_video_failed(self, index: int, total: int, path: str, error: str) -> None:
@@ -571,8 +577,9 @@ class MainWindow(QMainWindow):
         self.timeline.refresh()
 
     def _set_player_source(self, path: str) -> None:
-        del path
-        self.stop_video()
+        self.preview_timer.stop()
+        self.canvas.current_time = 0.0
+        self.canvas.load_video_frame(path)
 
     def play_video(self) -> None:
         if not self.project.video_path:
@@ -642,6 +649,17 @@ class MainWindow(QMainWindow):
         self.template_engine.save(TEMPLATE_PATH)
         self._load_templates()
 
+
+    def open_output_folder(self) -> None:
+        folder = self.last_output_dir
+        if folder is None and self.project.video_path:
+            candidate = Path(self.project.video_path).parent / "output"
+            folder = candidate if candidate.exists() else None
+        if folder is None or not folder.exists():
+            QMessageBox.warning(self, "Output folder", "No rendered output folder exists yet.")
+            return
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
+
     def save_project(self) -> None:
         path, _ = QFileDialog.getSaveFileName(self, "Save project", "project.json", "JSON (*.json)")
         if path:
@@ -662,12 +680,12 @@ class MainWindow(QMainWindow):
             return
         input_path = Path(self.project.video_path)
         output_dir = input_path.parent / "output"
-        output_dir.mkdir(exist_ok=True)
-        path = output_dir / f"{input_path.stem}_output.mp4"
+        path = unique_output_path(input_path, output_dir)
         self.log_view.clear()
         self.log_view.append(f"Exporting to: {path}")
         try:
             command = render_project(self.project, str(path), self.log_view.append)
+            self.last_output_dir = path.parent
             self.log_view.append(command.shell_string())
             QMessageBox.information(self, "Export complete", str(path))
         except Exception as exc:  # noqa: BLE001

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import tempfile
 import sys
 from pathlib import Path
 
@@ -95,3 +96,26 @@ def probe_video(path: str) -> dict[str, float | int]:
     stream = payload.get("streams", [{}])[0]
     duration = stream.get("duration") or payload.get("format", {}).get("duration") or 0
     return {"width": int(stream.get("width", 0)), "height": int(stream.get("height", 0)), "duration": float(duration)}
+
+
+def extract_preview_frame(video_path: str, seek_seconds: float = 0.05) -> Path:
+    target = Path(tempfile.gettempdir()) / f"autoinsert_preview_{abs(hash((video_path, seek_seconds)))}.jpg"
+    command = [
+        ffmpeg_path(require=True),
+        "-hide_banner",
+        "-nostdin",
+        "-y",
+        "-ss",
+        f"{seek_seconds:.2f}",
+        "-fflags",
+        "+genpts",
+        "-i",
+        video_path,
+        "-frames:v",
+        "1",
+        "-vsync",
+        "2",
+        str(target),
+    ]
+    subprocess.run(command, check=True, capture_output=True, text=True, timeout=15)
+    return target

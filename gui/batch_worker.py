@@ -9,6 +9,7 @@ from core.project_model import Project
 from core.renderer import render_project
 from core.text_template_engine import TextTemplateEngine
 from utils.ffmpeg_helper import probe_video
+from utils.output_naming import unique_output_path
 
 
 class BatchRenderWorker(QObject):
@@ -59,8 +60,7 @@ class BatchRenderWorker(QObject):
                         self.template_engine.apply_to_layer(layer, template, permanent=False)
                     input_path = Path(video_path)
                     output_dir = input_path.parent / "output"
-                    output_dir.mkdir(exist_ok=True)
-                    output_path = output_dir / f"{input_path.stem}_output.mp4"
+                    output_path = unique_output_path(input_path, output_dir)
                     self.logLine.emit(f"[{index}/{total}] attempt {attempt}: {input_path.name} → {output_path.name} ({template.name})")
                     render_project(
                         project,

@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import shlex
+import tempfile
 
 from core.motion_engine import alpha_expr, scale_expr, x_expr, y_expr
 from core.project_model import Project
@@ -22,50 +23,32 @@ class FFmpegCommand:
         return " ".join(shlex.quote(part) for part in self.args)
 
 
-def _escape(value: str) -> str:
-    return value.replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'").replace("%", "\\%").replace("\n", "\\n")
-
-
-def _quote(value: str) -> str:
-    return value.replace("\\", "\\\\").replace("'", "\\'")
-
-
-def _color(value: str) -> str:
-    if "@" in value:
-        base, alpha = value.split("@", 1)
-        return f"{_color(base)}@{alpha}"
-    return f"0x{value[1:]}" if value.startswith("#") else value
-
-
 def _enable(layer: TextLayer | StickerLayer) -> str:
     return f"between(t,{layer.start_time},{layer.end_time})"
 
 
-def _font(layer: TextLayer) -> str:
-    if layer.font_path:
-        return f":fontfile='{_quote(layer.font_path)}'"
-    return f":font='{_quote(layer.font_family)}'"
+def _asset_margin(layout) -> int:  # type: ignore[no-untyped-def]
+    return max(4, layout.stroke_width * 2 + layout.shadow_blur)
 
 
-def _text_filter(layer: TextLayer, source: str, index: int, project: Project) -> tuple[list[str], str]:
+def _text_asset_filter(layer: TextLayer, source: str, input_index: int, text_index: int, project: Project, text_asset_dir: Path) -> tuple[list[str], str]:
     engine = TextTemplateEngine.load(resource_path("templates/text_templates.json"))
     template = engine.get(layer.template_id)
     layout = engine.layout(layer, project.width, project.height, template)
     layer.color = template.text_color
     layer.box_color = template.background_color
+    margin = _asset_margin(layout)
     alpha = alpha_expr(layer.start_time, layer.motion_duration, layer.opacity, layer.motion_preset, layer.easing)
-    x = x_expr(layer.start_time, layer.motion_duration, layout.x, layer.motion_preset, layer.easing)
-    y = y_expr(layer.start_time, layer.motion_duration, layout.y, layer.motion_preset, layer.easing)
-    text = _escape(layout.text)
-    borderw = layer.stroke_width if layer.stroke_enabled else 0
-    draw = (
-        f"[{source}]drawtext=text='{text}'{_font(layer)}:fontsize={layout.font_size}:fontcolor={_color(template.text_color)}"
-        f":borderw={borderw}:bordercolor={_color(layer.stroke_color)}"
-        f":line_spacing={layout.line_spacing}:x='{x}':y='{y}':alpha='{alpha}'"
-        f":box=1:boxcolor={_color(template.background_color)}:boxborderw={layout.hpad}"
-        f":enable='{_enable(layer)}'[vtxt{index}]"
+    scale = scale_expr(layer.start_time, layer.motion_duration, 1.0, layer.motion_preset, layer.easing)
+    x = x_expr(layer.start_time, layer.motion_duration, layout.x - margin, layer.motion_preset, layer.easing)
+    y = y_expr(layer.start_time, layer.motion_duration, layout.y - margin, layer.motion_preset, layer.easing)
+    prep = (
+        f"[{input_index}:v]format=rgba,scale=w='iw*{scale}':h='ih*{scale}':eval=frame,"
+        f"colorchannelmixer=aa='{alpha}'[txt{text_index}]"
     )
-    return [draw], f"vtxt{index}"
+    out = f"vtxt{text_index}"
+    overlay = f"[{source}][txt{text_index}]overlay=x='{x}':y='{y}':shortest=1:enable='{_enable(layer)}'[{out}]"
+    return [prep, overlay], out
 
 
 def _sticker_filter(layer: StickerLayer, source: str, input_index: int, sticker_index: int) -> tuple[list[str], str]:
@@ -85,9 +68,10 @@ def _sticker_filter(layer: StickerLayer, source: str, input_index: int, sticker_
 
 
 def build_ffmpeg_command(project: Project, output_path: str, require_binaries: bool = False, text_asset_dir: str | Path | None = None) -> FFmpegCommand:
-    del text_asset_dir
     if not project.video_path:
         raise ValueError("Project has no input video")
+    text_dir = Path(text_asset_dir) if text_asset_dir is not None else Path(tempfile.gettempdir()) / "autoinsert_text_assets"
+    text_dir.mkdir(parents=True, exist_ok=True)
     args = [
         ffmpeg_path(require=require_binaries),
         "-hide_banner",
@@ -100,21 +84,35 @@ def build_ffmpeg_command(project: Project, output_path: str, require_binaries: b
         "-i",
         project.video_path,
     ]
+    text_input_indexes: list[int] = []
+    for idx, layer in enumerate(project.text_layers, start=1):
+        engine = TextTemplateEngine.load(resource_path("templates/text_templates.json"))
+        layout = engine.layout(layer, project.width, project.height, engine.get(layer.template_id))
+        asset_path = text_dir / f"text_layer_{idx}_{layer.layer_id}.png"
+        from core.text_rasterizer import render_text_layer_image
+
+        render_text_layer_image(layer, layout, asset_path)
+        args.extend(["-loop", "1", "-framerate", "30", "-i", str(asset_path)])
+        text_input_indexes.append(len(text_input_indexes) + 1)
+    sticker_input_indexes: list[int] = []
     for layer in project.sticker_layers:
         if layer.file_path:
             args.extend(["-loop", "1", "-framerate", "30", "-i", layer.file_path])
+            sticker_input_indexes.append(len(text_input_indexes) + len(sticker_input_indexes) + 1)
     filters = ["[0:v]setpts=PTS-STARTPTS[base]"]
     current = "base"
     for idx, layer in enumerate(project.text_layers, start=1):
-        parts, current = _text_filter(layer, current, idx, project)
+        parts, current = _text_asset_filter(layer, current, text_input_indexes[idx - 1], idx, project, text_dir)
         filters.extend(parts)
-    input_index = 1
-    for idx, layer in enumerate(project.sticker_layers, start=1):
+    sticker_number = 1
+    sticker_input_iter = iter(sticker_input_indexes)
+    for layer in project.sticker_layers:
         if not layer.file_path:
             continue
-        parts, current = _sticker_filter(layer, current, input_index, idx)
+        input_index = next(sticker_input_iter)
+        parts, current = _sticker_filter(layer, current, input_index, sticker_number)
         filters.extend(parts)
-        input_index += 1
+        sticker_number += 1
     filters.append(f"[{current}]format=yuv420p[final]")
     args.extend([
         "-filter_complex", ";".join(filters),

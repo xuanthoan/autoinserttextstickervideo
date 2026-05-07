@@ -19,6 +19,8 @@ class TextLayer:
     font_weight: int = 800
     font_size: int = 54
     template_id: str = "orange-white"
+    color: str = "#FFFFFF"
+    box_color: str = "#F57C4D"
     auto_uppercase: bool = False
     stroke_enabled: bool = False
     stroke_color: str = "black"
@@ -45,7 +47,7 @@ class TextLayer:
         return max(round(self.box_padding * 0.56), round(self.font_size * 0.45))
 
     def scaled_radius(self) -> int:
-        return round(self.font_size * 0.35)
+        return min(40, max(6, round(self.font_size * 0.35)))
 
     def scaled_line_spacing(self) -> int:
         return round(self.font_size * 0.25)

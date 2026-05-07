@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import subprocess
+import tempfile
 from collections.abc import Callable
 
 from core.ffmpeg_builder import FFmpegCommand, build_ffmpeg_command
@@ -64,7 +65,8 @@ def render_project(
     on_progress: ProgressCallback | None = None,
     should_cancel: CancelCallback | None = None,
 ) -> FFmpegCommand:
-    command = build_ffmpeg_command(project, output_path, require_binaries=True)
+    text_assets = tempfile.TemporaryDirectory(prefix="autoinsert_text_")
+    command = build_ffmpeg_command(project, output_path, require_binaries=True, text_asset_dir=text_assets.name)
     LOGGER.info("Running FFmpeg: %s", command.shell_string())
     if on_log:
         on_log("Running FFmpeg render...")
@@ -106,11 +108,14 @@ def render_project(
         code = process.wait()
     except Exception:
         _terminate_process(process)
+        text_assets.cleanup()
         raise
     if code != 0:
+        text_assets.cleanup()
         raise RuntimeError(f"FFmpeg failed with exit code {_format_return_code(code)}")
     if on_progress:
         on_progress(100.0)
     if on_log:
         on_log("FFmpeg render finished.")
+    text_assets.cleanup()
     return command

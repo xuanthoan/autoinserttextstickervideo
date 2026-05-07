@@ -9,6 +9,7 @@ from typing import Any, Iterable
 
 from core.text_layer import TextLayer
 
+REFERENCE_HEIGHT = 1920
 MIN_FONT_SIZE = 18
 DEFAULT_FONT = "Montserrat ExtraBold"
 FALLBACK_FONT = "Poppins Bold"
@@ -105,6 +106,7 @@ class TextLayout:
     radius: int
     line_spacing: int
     shadow_blur: int
+    stroke_width: int
     max_width: int
     template: TextTemplate
 
@@ -129,13 +131,23 @@ def max_text_width(width: int) -> int:
     return round(width * 0.78)
 
 
-def spacing(font_size: int, template: TextTemplate) -> tuple[int, int, int, int, int]:
+def scale_factor(height: int) -> float:
+    return max(0.1, height / REFERENCE_HEIGHT)
+
+
+def rendered_font_size(base_font_size: int, height: int) -> int:
+    return max(MIN_FONT_SIZE, round(base_font_size * scale_factor(height)))
+
+
+def spacing(font_size: int, template: TextTemplate) -> tuple[int, int, int, int, int, int]:
+    radius = min(40, max(6, round(font_size * template.border_radius_multiplier)))
     return (
         round(font_size * template.horizontal_padding_multiplier),
         round(font_size * template.vertical_padding_multiplier),
-        round(font_size * template.border_radius_multiplier),
+        radius,
         round(font_size * template.line_spacing_multiplier),
         round(font_size * template.shadow_blur_multiplier),
+        max(1, round(font_size * 0.08)),
     )
 
 
@@ -273,17 +285,19 @@ class TextTemplateEngine:
         item = template or self.get(layer.template_id)
         text = layer.text.upper() if (layer.auto_uppercase or item.auto_uppercase) else layer.text
         max_width = max_text_width(width)
-        font_size = max(layer.font_size, MIN_FONT_SIZE)
-        while font_size >= MIN_FONT_SIZE:
-            hpad, vpad, radius, line_gap, shadow = spacing(font_size, item)
-            hpad = max(hpad, layer.box_padding)
-            vpad = max(vpad, round(layer.box_padding * 0.56))
+        font_size = rendered_font_size(layer.font_size, height)
+        min_font_size = max(8, round(MIN_FONT_SIZE * scale_factor(height)))
+        scaled_box_padding = round(layer.box_padding * scale_factor(height))
+        while font_size >= min_font_size:
+            hpad, vpad, radius, line_gap, shadow, stroke_width = spacing(font_size, item)
+            hpad = max(hpad, scaled_box_padding)
+            vpad = max(vpad, round(scaled_box_padding * 0.56))
             lines = _wrap(text, font_size, max(MIN_FONT_SIZE, max_width - hpad * 2))
             text_width = max((_measure(line, font_size) for line in lines), default=1)
             line_height = round(font_size * 1.05)
             text_height = len(lines) * line_height + max(0, len(lines) - 1) * line_gap
             box_width = text_width + hpad * 2
-            if box_width <= max_width or font_size <= MIN_FONT_SIZE:
+            if box_width <= max_width or font_size <= min_font_size:
                 break
             font_size -= 1
         area = safe_area(width, height)
@@ -291,4 +305,4 @@ class TextTemplateEngine:
         box_height = text_height + vpad * 2
         x = min(max(round(layer.x), area.left), max(area.left, width - area.right - box_width))
         y = min(max(round(layer.y), area.top), max(area.top, height - area.bottom - box_height))
-        return TextLayout(text, lines, font_size, text_width, text_height, box_width, box_height, x, y, hpad, vpad, radius, line_gap, shadow, max_width, item)
+        return TextLayout(text, lines, font_size, text_width, text_height, box_width, box_height, x, y, hpad, vpad, radius, line_gap, shadow, stroke_width, max_width, item)

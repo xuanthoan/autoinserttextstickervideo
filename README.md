@@ -53,6 +53,8 @@ python main.py
 
 On Windows you can also double-click `main.py`; the app now switches to its own folder on startup so bundled `templates/`, `bin/ffmpeg.exe`, `bin/ffprobe.exe`, and `logs/` are found even when Explorer launches Python from another working directory.
 
+Rendered files are written to an `output/` folder with the original filename. Existing files are never overwritten; the app automatically adds `_001`, `_002`, and so on.
+
 ## Build
 
 ```bash

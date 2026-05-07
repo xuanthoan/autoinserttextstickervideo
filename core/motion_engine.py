@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-
 @dataclass(frozen=True)
 class MotionState:
     alpha: float = 1.0
@@ -14,6 +13,21 @@ class MotionState:
 
 def clamp(value: float, low: float = 0.0, high: float = 1.0) -> float:
     return max(low, min(high, value))
+
+
+def ease_out_back(progress: float) -> float:
+    p = clamp(progress)
+    c1 = 1.70158
+    c3 = c1 + 1
+    return 1 + c3 * (p - 1) ** 3 + c1 * (p - 1) ** 2
+
+
+def bounce_scale(progress: float) -> float:
+    p = clamp(progress)
+    if p < 0.6:
+        eased = ease_out_back(p / 0.6)
+        return 0.85 + (1.08 - 0.85) * eased
+    return 1.08 + (1.0 - 1.08) * ease((p - 0.6) / 0.4, "ease-out")
 
 
 def ease(progress: float, easing: str = "linear") -> float:
@@ -52,7 +66,7 @@ def state_at(preset: str, t: float, start: float, duration: float, x: float, y: 
     if preset == "zoom_out":
         return MotionState(opacity, x, y, 1.25 - 0.25 * p)
     if preset == "bounce":
-        return MotionState(opacity, x, y, 1 + 0.16 * (1 - p) * abs(__import__("math").sin(p * 9.42)))
+        return MotionState(opacity, x, y, bounce_scale(p))
     if preset == "pop":
         return MotionState(opacity, x, y, 0.2 + 0.8 * p if p < 1 else 1)
     return MotionState(opacity, x, y)
@@ -103,7 +117,12 @@ def scale_expr(start: float, duration: float, scale: float, preset: str, easing:
     if preset == "zoom_out":
         return f"{scale}*(1.25-0.25*{p})"
     if preset == "bounce":
-        return f"{scale}*(1+0.16*(1-{p})*abs(sin({p}*PI*3)))"
+        eased_first = f"(1+(2.70158)*pow(({p}/0.6)-1,3)+1.70158*pow(({p}/0.6)-1,2))"
+        first = f"0.85+(1.08-0.85)*{eased_first}"
+        second_progress = f"clip(({p}-0.6)/0.4,0,1)"
+        second_ease = f"1-pow(1-{second_progress},2)"
+        second = f"1.08+(1.0-1.08)*{second_ease}"
+        return f"{scale}*if(lt({p},0.6),{first},{second})"
     if preset == "pop":
         return f"{scale}*(0.2+0.8*{p})"
     return f"{scale}"

@@ -9,6 +9,7 @@ from core.project_model import Project
 from core.renderer import render_project
 from core.text_template_engine import TextTemplateEngine
 from utils.ffmpeg_helper import probe_video
+from utils.output_naming import unique_output_path
 
 
 @dataclass(frozen=True)
@@ -45,8 +46,7 @@ class BatchRenderer:
                     self.template_engine.apply_to_layer(layer, template)
                 source = Path(video)
                 output_dir = source.parent / "output"
-                output_dir.mkdir(exist_ok=True)
-                output = output_dir / f"{source.stem}_output.mp4"
+                output = unique_output_path(source, output_dir)
                 if on_log:
                     on_log(f"Rendering {source.name} with {template.name}")
                 render_project(project, str(output), on_log)
